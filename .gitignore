@@ -13,7 +13,7 @@ override.tf.json
 *_override.tf.json
 
 # Logs (keep directory, ignore content)
-logs/*.log
+.claude/logs/*.log
 
 # OS
 .DS_Store

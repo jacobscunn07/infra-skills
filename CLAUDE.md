@@ -91,7 +91,7 @@ Defined in [.claude/settings.json](.claude/settings.json).
 
 ### PreToolUse
 - **Block dangerous commands:** Intercepts `Bash` tool calls matching the guard rail patterns above and exits with an error before execution.
-- **Log tool calls:** Appends a timestamped record to `logs/tool-activity.log` for all `Bash`, `Write`, and `Edit` tool calls.
+- **Log tool calls:** Appends a timestamped record to `.claude/logs/tool-activity.log` for all `Bash`, `Write`, and `Edit` tool calls.
 
 ---
 
@@ -145,26 +145,26 @@ Shared memory lives in `.claude/memory/`. Use it to record decisions and context
 ├── .claude/
 │   ├── settings.json          # Hooks and permissions
 │   ├── settings.local.json    # Local overrides (not committed)
-│   └── skills/                # Skill definitions
+│   ├── skills/                # Skill definitions
+│   └── logs/                  # Tool activity logs
 ├── .mcp.json                  # MCP server configuration
 ├── docs/
 │   ├── architecture/          # Mermaid architecture diagrams
 │   ├── reference/             # Reference documents
 │   └── runbooks/              # SRE operational runbooks
 ├── modules/                   # Reusable local Terraform modules
-├── <component>/               # e.g. networking-spoke/, data/
-│   ├── main.tf                # Module calls — no env-specific values
-│   ├── variables.tf           # Variable declarations
-│   ├── outputs.tf
-│   ├── locals.tf              # environment = terraform.workspace
-│   ├── versions.tf
-│   ├── backend.tf
-│   └── environments/
-│       ├── dev/
-│       │   └── terraform.tfvars
-│       ├── staging/
-│       │   └── terraform.tfvars
-│       └── prod/
-│           └── terraform.tfvars
-└── logs/                      # Tool activity logs
+└── <component>/               # e.g. networking-spoke/, data/
+    ├── main.tf                # Module calls — no env-specific values
+    ├── variables.tf           # Variable declarations
+    ├── outputs.tf
+    ├── locals.tf              # environment = terraform.workspace
+    ├── versions.tf
+    ├── backend.tf
+    └── environments/
+        ├── dev/
+        │   └── terraform.tfvars
+        ├── staging/
+        │   └── terraform.tfvars
+        └── prod/
+            └── terraform.tfvars
 ```

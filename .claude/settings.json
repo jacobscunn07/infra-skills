@@ -15,8 +15,8 @@
           },
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); cmd=d.get('tool_input',{}).get('command','?'); parts=cmd.split(); proj=next((os.path.basename(parts[i+1].rstrip('/')) for i,p in enumerate(parts[:-1]) if p=='cd'),'unknown'); chdir=next((p.split('=',1)[1].rstrip('/') for p in parts if p.startswith('-chdir=')),''); proj=os.path.basename(chdir) if chdir else proj; log_dir='/Users/jacobcunningham/_CODE/infra-skills/logs'; os.makedirs(log_dir,exist_ok=True); tf_flag=' [project:'+proj+']' if any(t in cmd for t in ['terraform','tofu']) else ''; open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Bash]'+tf_flag+' '+cmd[:200]+'\\n')\"",
-            "description": "Log all Bash tool calls to <repo-root>/logs/tool-activity.log; include [project:<name>] for terraform commands"
+            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); cmd=d.get('tool_input',{}).get('command','?'); parts=cmd.split(); proj=next((os.path.basename(parts[i+1].rstrip('/')) for i,p in enumerate(parts[:-1]) if p=='cd'),'unknown'); chdir=next((p.split('=',1)[1].rstrip('/') for p in parts if p.startswith('-chdir=')),''); proj=os.path.basename(chdir) if chdir else proj; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); tf_flag=' [project:'+proj+']' if any(t in cmd for t in ['terraform','tofu']) else ''; open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Bash]'+tf_flag+' '+cmd[:200]+'\\n')\"",
+            "description": "Log all Bash tool calls to <repo-root>/.claude/logs/tool-activity.log; include [project:<name>] for terraform commands"
           }
         ]
       },
@@ -25,8 +25,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); rel=fp.replace('/Users/jacobcunningham/_CODE/infra-skills/',''); proj=rel.split('/')[0] if '/' in rel else 'root'; log_dir='/Users/jacobcunningham/_CODE/infra-skills/logs'; os.makedirs(log_dir,exist_ok=True); open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Write] [project:'+proj+'] '+fp+'\\n')\"",
-            "description": "Log all Write tool calls to <repo-root>/logs/tool-activity.log with project context"
+            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); rel=fp.replace('/Users/jacobcunningham/_CODE/infra-skills/',''); proj=rel.split('/')[0] if '/' in rel else 'root'; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Write] [project:'+proj+'] '+fp+'\\n')\"",
+            "description": "Log all Write tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
         ]
       },
@@ -35,8 +35,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); rel=fp.replace('/Users/jacobcunningham/_CODE/infra-skills/',''); proj=rel.split('/')[0] if '/' in rel else 'root'; log_dir='/Users/jacobcunningham/_CODE/infra-skills/logs'; os.makedirs(log_dir,exist_ok=True); open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Edit] [project:'+proj+'] '+fp+'\\n')\"",
-            "description": "Log all Edit tool calls to <repo-root>/logs/tool-activity.log with project context"
+            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); rel=fp.replace('/Users/jacobcunningham/_CODE/infra-skills/',''); proj=rel.split('/')[0] if '/' in rel else 'root'; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Edit] [project:'+proj+'] '+fp+'\\n')\"",
+            "description": "Log all Edit tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
         ]
       }
