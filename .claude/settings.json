@@ -1,0 +1,78 @@
+{
+  "env": {},
+  "enabledMcpjsonServers": [
+    "terraform-registry"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'CMD=\"$1\"; PATTERNS=(\"terraform apply\" \"terraform destroy\" \"terraform force-unlock\" \"aws s3 rb\" \"aws iam delete\" \"aws ec2 terminate-instances\" \"rm -rf\" \"git push --force\" \"kubectl delete namespace\"); for P in \"${PATTERNS[@]}\"; do if echo \"$CMD\" | grep -qF \"$P\"; then echo \"BLOCKED: \\\"$P\\\" is a guard-railed command. Human approval required before this action can be taken. Aborting.\"; exit 1; fi; done' -- \"{{command}}\"",
+            "description": "Block dangerous / destructive commands that require explicit human approval"
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); cmd=d.get('tool_input',{}).get('command','?')[:200]; os.makedirs('logs',exist_ok=True); open('logs/tool-activity.log','a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Bash] '+cmd+'\\n')\"",
+            "description": "Log all Bash tool calls to logs/tool-activity.log for audit"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); os.makedirs('logs',exist_ok=True); open('logs/tool-activity.log','a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Write] '+fp+'\\n')\"",
+            "description": "Log all Write tool calls"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); os.makedirs('logs',exist_ok=True); open('logs/tool-activity.log','a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Edit] '+fp+'\\n')\"",
+            "description": "Log all Edit tool calls"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(terraform validate:*)",
+      "Bash(terraform fmt:*)",
+      "Bash(terraform plan:*)",
+      "Bash(terraform init:*)",
+      "Bash(terraform output:*)",
+      "Bash(terraform show:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)",
+      "Bash(aws sts get-caller-identity:*)",
+      "Bash(aws ec2 describe-*:*)",
+      "Bash(aws rds describe-*:*)",
+      "Bash(aws s3 ls:*)",
+      "Bash(aws cloudformation describe-*:*)"
+    ],
+    "deny": [
+      "Bash(terraform apply:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(terraform force-unlock:*)",
+      "Bash(git push --force:*)",
+      "Bash(rm -rf:*)",
+      "Bash(aws iam delete-*:*)",
+      "Bash(aws s3 rb:*)",
+      "Bash(aws ec2 terminate-instances:*)",
+      "Bash(kubectl delete namespace:*)"
+    ]
+  }
+}
