@@ -144,23 +144,23 @@ locals {
   ssm_prefix = "/${var.project}/${local.environment}/<component>"
 }
 
-# Plain strings
+# Single values → String, wrapped as { "value": "..." }
 resource "aws_ssm_parameter" "vpc_id" {
   provider = aws.ssm
   name     = "${local.ssm_prefix}/vpc_id"
   type     = "String"
-  value    = module.vpc.vpc_id
+  value    = jsonencode({ value = module.vpc.vpc_id })
 }
 
-# Lists → StringList (comma-separated)
+# Lists → String, native JSON array
 resource "aws_ssm_parameter" "private_subnet_ids" {
   provider = aws.ssm
   name     = "${local.ssm_prefix}/private_subnet_ids"
-  type     = "StringList"
-  value    = join(",", module.vpc.private_subnets)
+  type     = "String"
+  value    = jsonencode(module.vpc.private_subnets)
 }
 
-# Maps → JSON-encoded String
+# Maps → String, native JSON object
 resource "aws_ssm_parameter" "private_subnet_ids_by_az" {
   provider = aws.ssm
   name     = "${local.ssm_prefix}/private_subnet_ids_by_az"
@@ -168,12 +168,12 @@ resource "aws_ssm_parameter" "private_subnet_ids_by_az" {
   value    = jsonencode(zipmap(var.availability_zones, module.vpc.private_subnets))
 }
 
-# Sensitive values → SecureString
+# Sensitive values → SecureString, still JSON-encoded
 resource "aws_ssm_parameter" "db_master_secret_arn" {
   provider = aws.ssm
   name     = "${local.ssm_prefix}/db_master_secret_arn"
   type     = "SecureString"
-  value    = module.aurora.cluster_master_user_secret[0].secret_arn
+  value    = jsonencode({ value = module.aurora.cluster_master_user_secret[0].secret_arn })
 }
 
 # Conditional outputs → count tied to the same guard as the resource
@@ -182,7 +182,7 @@ resource "aws_ssm_parameter" "rds_proxy_endpoint" {
   provider = aws.ssm
   name     = "${local.ssm_prefix}/rds_proxy_endpoint"
   type     = "String"
-  value    = aws_db_proxy.main[0].endpoint
+  value    = jsonencode({ value = aws_db_proxy.main[0].endpoint })
 }
 ```
 
@@ -207,7 +207,7 @@ locals {
 
 - **Always** create `ssm.tf` in every root module alongside `outputs.tf`
 - Use `/<project>/<environment>/<component>/<output-name>` as the path — never flatten or abbreviate
-- `StringList` for lists, `String` (jsonencoded) for maps, `SecureString` for anything marked `sensitive`
+- Always `String` or `SecureString` — never `StringList`. All values are `jsonencode`d: scalars as `{ "value": "..." }`, lists as a JSON array, maps as a JSON object
 - The `aws.ssm` provider alias is always present — even if `ssm_region == aws_region` — so future redirection requires only a variable change
 
 ---
