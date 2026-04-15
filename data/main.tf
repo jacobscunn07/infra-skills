@@ -84,7 +84,7 @@ module "aurora" {
 
   # When proxy is enabled, only the proxy SG may reach Aurora.
   # When proxy is disabled, allowed app SGs connect directly.
-  ingress_rules = var.enable_rds_proxy ? {
+  security_group_ingress_rules = var.enable_rds_proxy ? {
     from_proxy = {
       description                  = "Allow PostgreSQL from RDS Proxy"
       from_port                    = 5432
@@ -92,12 +92,12 @@ module "aurora" {
       ip_protocol                  = "tcp"
       referenced_security_group_id = aws_security_group.rds_proxy[0].id
     }
-  } : { for sg_id in var.aurora_allowed_sg_ids : sg_id => {
-    description                  = "Allow PostgreSQL from application security group"
-    from_port                    = 5432
-    to_port                      = 5432
-    ip_protocol                  = "tcp"
-    referenced_security_group_id = sg_id
+    } : { for sg_id in var.aurora_allowed_sg_ids : sg_id => {
+      description                  = "Allow PostgreSQL from application security group"
+      from_port                    = 5432
+      to_port                      = 5432
+      ip_protocol                  = "tcp"
+      referenced_security_group_id = sg_id
   } }
 
   apply_immediately = local.environment != "prod"

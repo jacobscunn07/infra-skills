@@ -105,6 +105,113 @@ output "vpc_id" {
 
 ---
 
+## SSM Output Publishing
+
+**Every root module must mirror its outputs to SSM Parameter Store** via a dedicated `aws.ssm` provider alias. This lets any consumer — another Terraform project, a CDK app, a CI script — read outputs without access to the Terraform state backend.
+
+### Provider Setup (`versions.tf`)
+
+```hcl
+provider "aws" {
+  region = var.aws_region
+  default_tags { tags = local.common_tags }
+}
+
+# Dedicated provider for SSM output publishing.
+# Can be redirected to a central account/region without touching the main provider.
+provider "aws" {
+  alias  = "ssm"
+  region = var.ssm_region
+  default_tags { tags = local.common_tags }
+}
+```
+
+Add a matching variable (`variables.tf`):
+
+```hcl
+variable "ssm_region" {
+  type        = string
+  description = "AWS region for SSM Parameter Store output publishing. Defaults to the deployment region."
+  default     = "us-east-1"
+}
+```
+
+### `ssm.tf` Pattern
+
+```hcl
+# Path: /<project>/<environment>/<component>/<output-name>
+locals {
+  ssm_prefix = "/${var.project}/${local.environment}/<component>"
+}
+
+# Plain strings
+resource "aws_ssm_parameter" "vpc_id" {
+  provider = aws.ssm
+  name     = "${local.ssm_prefix}/vpc_id"
+  type     = "String"
+  value    = module.vpc.vpc_id
+}
+
+# Lists → StringList (comma-separated)
+resource "aws_ssm_parameter" "private_subnet_ids" {
+  provider = aws.ssm
+  name     = "${local.ssm_prefix}/private_subnet_ids"
+  type     = "StringList"
+  value    = join(",", module.vpc.private_subnets)
+}
+
+# Maps → JSON-encoded String
+resource "aws_ssm_parameter" "private_subnet_ids_by_az" {
+  provider = aws.ssm
+  name     = "${local.ssm_prefix}/private_subnet_ids_by_az"
+  type     = "String"
+  value    = jsonencode(zipmap(var.availability_zones, module.vpc.private_subnets))
+}
+
+# Sensitive values → SecureString
+resource "aws_ssm_parameter" "db_master_secret_arn" {
+  provider = aws.ssm
+  name     = "${local.ssm_prefix}/db_master_secret_arn"
+  type     = "SecureString"
+  value    = module.aurora.cluster_master_user_secret[0].secret_arn
+}
+
+# Conditional outputs → count tied to the same guard as the resource
+resource "aws_ssm_parameter" "rds_proxy_endpoint" {
+  count    = var.enable_rds_proxy ? 1 : 0
+  provider = aws.ssm
+  name     = "${local.ssm_prefix}/rds_proxy_endpoint"
+  type     = "String"
+  value    = aws_db_proxy.main[0].endpoint
+}
+```
+
+### Reading SSM Parameters (any consumer)
+
+```hcl
+# Terraform
+data "aws_ssm_parameter" "vpc_id" {
+  name = "/myapp/prod/networking-spoke/vpc_id"
+}
+
+# AWS CLI
+aws ssm get-parameter --name "/myapp/prod/networking-spoke/vpc_id" --query Parameter.Value --output text
+
+# Comma-joined list → split back into a list in Terraform
+locals {
+  private_subnet_ids = split(",", data.aws_ssm_parameter.private_subnet_ids.value)
+}
+```
+
+### Rules
+
+- **Always** create `ssm.tf` in every root module alongside `outputs.tf`
+- Use `/<project>/<environment>/<component>/<output-name>` as the path — never flatten or abbreviate
+- `StringList` for lists, `String` (jsonencoded) for maps, `SecureString` for anything marked `sensitive`
+- The `aws.ssm` provider alias is always present — even if `ssm_region == aws_region` — so future redirection requires only a variable change
+
+---
+
 ## Workspaces for Environment Management
 
 **Use Terraform workspaces as the environment mechanism.** Each environment (`dev`, `staging`, `prod`) is a separate workspace. Environment-specific variable values live in `environments/<workspace>/terraform.tfvars`.

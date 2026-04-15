@@ -123,6 +123,7 @@ Shared memory lives in `.claude/memory/`. Use it to record decisions and context
 - **State:** Remote state in S3 with `use_lockfile = true`. Workspace prefix is automatic — the backend `key` is the base path; Terraform prepends `env:/<workspace>/` per workspace.
 - **Variables:** No hardcoded account IDs, regions, or secrets. Use `var.*` or `data.aws_caller_identity`.
 - **Secrets:** Never commit secrets. Use AWS Secrets Manager or SSM Parameter Store references. Prefer `manage_master_user_password = true` on RDS/Aurora so AWS manages credentials natively.
+- **SSM output publishing:** Every root module must have an `ssm.tf` that mirrors all outputs to SSM Parameter Store via a dedicated `aws.ssm` provider alias. Path convention: `/<project>/<environment>/<component>/<output-name>`. This allows any consumer (Terraform, CDK, scripts) to read outputs without access to the state backend. See the `/terraform` skill for the full pattern.
 
 ### Git
 

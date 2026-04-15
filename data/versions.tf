@@ -16,3 +16,15 @@ provider "aws" {
     tags = local.common_tags
   }
 }
+
+# Dedicated provider for publishing outputs to SSM Parameter Store.
+# Defaults to the same region as the deployment but can be redirected
+# to a central account or region without touching the main provider.
+provider "aws" {
+  alias  = "ssm"
+  region = var.ssm_region
+
+  default_tags {
+    tags = local.common_tags
+  }
+}

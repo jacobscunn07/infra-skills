@@ -9,6 +9,12 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "ssm_region" {
+  type        = string
+  description = "AWS region for SSM Parameter Store output publishing. Defaults to the deployment region. Override to write outputs to a central/shared region."
+  default     = "us-east-1"
+}
+
 variable "owner" {
   type        = string
   description = "Team or individual responsible for this infrastructure."
