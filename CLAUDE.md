@@ -8,7 +8,7 @@ This is an infrastructure-as-code repository using Terraform to provision and ma
 
 ## Project Overview
 
-Infrastructure-as-code repository targeting AWS. Terraform is the sole provisioning tool. Remote state lives in S3 with DynamoDB locking, per environment.
+Infrastructure-as-code repository targeting AWS. Terraform is the sole provisioning tool. Remote state lives in S3 with native file locking (`use_lockfile = true`), isolated per environment via **Terraform workspaces**.
 
 ---
 
@@ -114,12 +114,15 @@ Shared memory lives in `.claude/memory/`. Use it to record decisions and context
 
 ### Terraform
 
-- **Module structure:** All modules live in `modules/<module-name>/`. Each must have `main.tf`, `variables.tf`, `outputs.tf`, and `README.md`.
+- **Modules first:** Always prefer `terraform-aws-modules/*` community modules over raw resource blocks. Search the Terraform registry MCP before writing any raw `resource`. Only fall back to raw resources when no suitable module exists.
+- **Workspaces:** Each environment (`dev`, `staging`, `prod`) is a Terraform workspace. Run with `terraform workspace select <env> && terraform apply -var-file=environments/<env>/terraform.tfvars`. Never use a `variable "environment"` — derive it from `terraform.workspace` via `locals.tf`.
+- **Environment vars:** Environment-specific values live in `environments/<workspace>/terraform.tfvars` within each project folder. Do not commit secrets to these files.
+- **Module structure:** Reusable local modules live in `modules/<module-name>/`. Each must have `main.tf`, `variables.tf`, `outputs.tf`, and `README.md`.
 - **Naming:** `<project>-<env>-<resource-type>-<descriptor>` (e.g., `myapp-prod-sg-alb`).
-- **Tagging:** Every resource must include: `Environment`, `Project`, `ManagedBy=terraform`, `Owner`, `CostCenter`.
-- **State:** Remote state in S3 with DynamoDB locking. Per-environment state: `<project>/<env>/terraform.tfstate`.
+- **Tagging:** Every resource must include: `Environment`, `Project`, `ManagedBy=terraform`, `Owner`, `CostCenter`. Use provider-level `default_tags` to apply common tags automatically.
+- **State:** Remote state in S3 with `use_lockfile = true`. Workspace prefix is automatic — the backend `key` is the base path; Terraform prepends `env:/<workspace>/` per workspace.
 - **Variables:** No hardcoded account IDs, regions, or secrets. Use `var.*` or `data.aws_caller_identity`.
-- **Secrets:** Never commit secrets. Use AWS Secrets Manager or SSM Parameter Store references.
+- **Secrets:** Never commit secrets. Use AWS Secrets Manager or SSM Parameter Store references. Prefer `manage_master_user_password = true` on RDS/Aurora so AWS manages credentials natively.
 
 ### Git
 
@@ -148,10 +151,20 @@ Shared memory lives in `.claude/memory/`. Use it to record decisions and context
 │   ├── architecture/          # Mermaid architecture diagrams
 │   ├── reference/             # Reference documents
 │   └── runbooks/              # SRE operational runbooks
-├── modules/                   # Reusable Terraform modules
-├── environments/
-│   ├── dev/
-│   ├── staging/
-│   └── prod/
+├── modules/                   # Reusable local Terraform modules
+├── <component>/               # e.g. networking-spoke/, data/
+│   ├── main.tf                # Module calls — no env-specific values
+│   ├── variables.tf           # Variable declarations
+│   ├── outputs.tf
+│   ├── locals.tf              # environment = terraform.workspace
+│   ├── versions.tf
+│   ├── backend.tf
+│   └── environments/
+│       ├── dev/
+│       │   └── terraform.tfvars
+│       ├── staging/
+│       │   └── terraform.tfvars
+│       └── prod/
+│           └── terraform.tfvars
 └── logs/                      # Tool activity logs
 ```

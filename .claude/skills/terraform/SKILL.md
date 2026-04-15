@@ -27,6 +27,182 @@ Comprehensive Terraform guidance covering HCL authoring, module design, state ma
 
 ---
 
+## Core Principle: Prefer Community Modules
+
+**Always prefer public community modules over raw resource blocks.** The `terraform-aws-modules` ecosystem covers the vast majority of AWS infrastructure needs and is the default starting point.
+
+Before writing any raw `resource` block, ask: does a `terraform-aws-modules/*` module exist for this? If so, use it.
+
+### Module-First Decision Tree
+
+1. Search the Terraform registry (via the `terraform-registry` MCP) for a matching `terraform-aws-modules/*` module.
+2. If a module exists: use it, pin to `~> <major>.0`, and configure only the inputs you need.
+3. If no module exists **or** the module doesn't support your use case: write raw resources.
+4. **Never** write raw resources for VPCs, S3 buckets, KMS keys, RDS/Aurora, ECS clusters, IAM roles, or security groups when a `terraform-aws-modules` module covers the use case.
+
+### Key Community Modules (Always Check Latest Version via MCP)
+
+| AWS Service | Module |
+|---|---|
+| VPC, subnets, NAT, flow logs | `terraform-aws-modules/vpc/aws` |
+| Aurora / RDS | `terraform-aws-modules/rds-aurora/aws` or `terraform-aws-modules/rds/aws` |
+| S3 buckets | `terraform-aws-modules/s3-bucket/aws` |
+| KMS keys | `terraform-aws-modules/kms/aws` |
+| IAM roles and policies | `terraform-aws-modules/iam/aws` (submodules) |
+| Security groups | `terraform-aws-modules/security-group/aws` |
+| ECS cluster + services | `terraform-aws-modules/ecs/aws` |
+| ECR repositories | `terraform-aws-modules/ecr/aws` |
+| EKS clusters | `terraform-aws-modules/eks/aws` |
+| Lambda functions | `terraform-aws-modules/lambda/aws` |
+| ALB / NLB | `terraform-aws-modules/alb/aws` |
+| CloudWatch alarms | `terraform-aws-modules/cloudwatch/aws` |
+
+### Module Calling Pattern
+
+```hcl
+# Query the MCP for the latest version before writing this.
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 6.0"   # Pin to major; allows patch/minor updates
+
+  name = "${local.name_prefix}-vpc"
+  cidr = var.vpc_cidr
+
+  azs              = var.availability_zones
+  public_subnets   = var.public_subnet_cidrs
+  private_subnets  = var.private_subnet_cidrs
+  database_subnets = var.isolated_subnet_cidrs
+
+  enable_nat_gateway     = var.enable_nat_gateway
+  single_nat_gateway     = var.single_nat_gateway
+  one_nat_gateway_per_az = !var.single_nat_gateway
+
+  enable_flow_log                                 = var.enable_flow_logs
+  create_flow_log_cloudwatch_log_group            = var.enable_flow_logs
+  create_flow_log_cloudwatch_iam_role             = var.enable_flow_logs
+  flow_log_cloudwatch_log_group_retention_in_days = var.flow_log_retention_days
+
+  tags = local.common_tags
+}
+
+# Reference module outputs
+output "vpc_id" {
+  value = module.vpc.vpc_id
+}
+```
+
+### Module Design Rules
+
+- One responsibility per module — don't create a "mega-module" for an entire environment
+- Pass in all IDs/ARNs as variables — never hardcode resource identifiers inside a module
+- Always pin registry modules to a major version constraint (`~> 6.0`, not `>= 6.0`)
+- Expose outputs for any resource attribute callers might need
+- Mark outputs `sensitive = true` if they expose secrets
+- **Always query the `terraform-registry` MCP for the latest version** before writing a `source` + `version` block
+
+---
+
+## Workspaces for Environment Management
+
+**Use Terraform workspaces as the environment mechanism.** Each environment (`dev`, `staging`, `prod`) is a separate workspace. Environment-specific variable values live in `environments/<workspace>/terraform.tfvars`.
+
+### Workspace Workflow
+
+```bash
+# Create and select a workspace
+terraform workspace new dev
+terraform workspace select dev
+terraform workspace list
+
+# Apply with workspace-specific vars
+terraform apply -var-file=environments/dev/terraform.tfvars
+
+# Plan with output file for safe apply
+terraform plan -var-file=environments/dev/terraform.tfvars -out=plan.tfplan
+terraform apply plan.tfplan
+```
+
+### Directory Layout with Workspaces
+
+```
+my-component/
+├── main.tf           # Module calls — no environment-specific values
+├── variables.tf      # Variable declarations — no environment defaults
+├── outputs.tf
+├── locals.tf         # environment = terraform.workspace
+├── versions.tf
+├── backend.tf        # Single backend config; workspace prefix is automatic
+└── environments/
+    ├── dev/
+    │   └── terraform.tfvars
+    ├── staging/
+    │   └── terraform.tfvars
+    └── prod/
+        └── terraform.tfvars
+```
+
+### Derive Environment from Workspace
+
+```hcl
+# locals.tf
+locals {
+  # Valid workspaces: dev, staging, prod
+  environment = terraform.workspace
+  name_prefix = "${var.project}-${local.environment}"
+
+  common_tags = {
+    Project     = var.project
+    Environment = local.environment
+    ManagedBy   = "terraform"
+    Owner       = var.owner
+    CostCenter  = var.cost_center
+  }
+}
+```
+
+- Remove `variable "environment"` from `variables.tf` — the workspace IS the environment.
+- Reference `local.environment` everywhere instead of `var.environment`.
+- Use `local.environment == "prod"` for environment-specific toggles (e.g., `deletion_protection`, `skip_final_snapshot`).
+
+### Reading Another Component's Workspace State
+
+When one component reads another's remote state, use the `workspace` parameter to automatically select the matching workspace's state:
+
+```hcl
+data "terraform_remote_state" "networking" {
+  backend   = "s3"
+  workspace = terraform.workspace   # reads env:/dev/networking/terraform.tfstate in dev, etc.
+
+  config = {
+    bucket = var.networking_state_bucket
+    key    = "networking-spoke/terraform.tfstate"
+    region = var.networking_state_region
+  }
+}
+```
+
+### S3 Backend with Workspaces
+
+The S3 backend automatically namespaces state per workspace. The `key` in `backend.tf` is the base key; Terraform prepends `env:/<workspace>/` automatically.
+
+```hcl
+# backend.tf — single config, workspace-isolated state
+terraform {
+  backend "s3" {
+    bucket       = "REPLACE_WITH_TERRAFORM_STATE_BUCKET"
+    key          = "networking-spoke/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+# dev state:     env:/dev/networking-spoke/terraform.tfstate
+# staging state: env:/staging/networking-spoke/terraform.tfstate
+# prod state:    env:/prod/networking-spoke/terraform.tfstate
+```
+
+---
+
 ## File Structure
 
 ### Standard Module Layout
@@ -45,15 +221,23 @@ my-module/
         └── outputs.tf
 ```
 
-### Root Module (Deployment Config) Layout
+### Root Module (Deployment Config) with Workspaces
 
 ```
-environments/prod/
-├── main.tf          # Module calls and top-level resources
+my-component/
+├── main.tf
 ├── variables.tf
 ├── outputs.tf
-├── terraform.tfvars # Actual values (do not commit secrets)
-└── backend.tf       # Remote backend configuration
+├── locals.tf         # environment = terraform.workspace
+├── versions.tf
+├── backend.tf
+└── environments/
+    ├── dev/
+    │   └── terraform.tfvars
+    ├── staging/
+    │   └── terraform.tfvars
+    └── prod/
+        └── terraform.tfvars
 ```
 
 ---
@@ -136,16 +320,6 @@ resource "aws_db_instance" "main" {
 ### Variable Declaration (`variables.tf`)
 
 ```hcl
-variable "environment" {
-  type        = string
-  description = "Deployment environment (dev, staging, prod)"
-
-  validation {
-    condition     = contains(["dev", "staging", "prod"], var.environment)
-    error_message = "environment must be dev, staging, or prod."
-  }
-}
-
 variable "instance_count" {
   type    = number
   default = 1
@@ -201,16 +375,11 @@ Use locals to name complex expressions once:
 ```hcl
 locals {
   common_tags = merge(var.tags, {
-    Environment = var.environment
+    Environment = local.environment
     ManagedBy   = "terraform"
   })
 
-  name_prefix = "${var.project}-${var.environment}"
-}
-
-resource "aws_instance" "web" {
-  # ...
-  tags = local.common_tags
+  name_prefix = "${var.project}-${local.environment}"
 }
 ```
 
@@ -234,14 +403,14 @@ policy = jsonencode({
 
 user_data = <<-EOT
   #!/bin/bash
-  echo "Hello from ${var.environment}"
+  echo "Hello from ${local.environment}"
 EOT
 ```
 
 ### Conditional Expression
 
 ```hcl
-instance_type = var.environment == "prod" ? "t3.large" : "t3.micro"
+instance_type = local.environment == "prod" ? "t3.large" : "t3.micro"
 ```
 
 ### `for` Expressions
@@ -249,9 +418,6 @@ instance_type = var.environment == "prod" ? "t3.large" : "t3.micro"
 ```hcl
 # Transform a list
 upper_names = [for name in var.names : upper(name)]
-
-# Filter a list
-prod_instances = [for i in var.instances : i if i.env == "prod"]
 
 # Build a map from a list
 name_map = { for user in var.users : user.name => user.id }
@@ -289,52 +455,6 @@ resource "aws_security_group" "web" {
 
 ---
 
-## Modules
-
-### Calling a Module
-
-```hcl
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
-
-  name = "${local.name_prefix}-vpc"
-  cidr = "10.0.0.0/16"
-
-  azs             = ["us-east-1a", "us-east-1b"]
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
-}
-
-# Reference module outputs
-resource "aws_instance" "app" {
-  subnet_id = module.vpc.private_subnets[0]
-}
-```
-
-### Local Module
-
-```hcl
-module "database" {
-  source = "./modules/rds"
-
-  name        = "${local.name_prefix}-db"
-  environment = var.environment
-  vpc_id      = module.vpc.vpc_id
-  subnet_ids  = module.vpc.private_subnets
-}
-```
-
-### Module Design Rules
-
-- One responsibility per module — don't create a "mega-module" for an entire environment
-- Pass in all IDs/ARNs as variables — never hardcode resource identifiers inside a module
-- Always pin registry modules to a version constraint (`~> 5.0`, not `>= 5.0`)
-- Expose outputs for any resource attribute callers might need
-- Mark outputs `sensitive = true` if they expose secrets
-
----
-
 ## Providers and Versions
 
 ### `versions.tf`
@@ -346,7 +466,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -360,11 +480,6 @@ provider "aws" {
   alias  = "us_west"
   region = "us-west-2"
 }
-
-resource "aws_s3_bucket" "replica" {
-  provider = aws.us_west
-  bucket   = "my-replica-bucket"
-}
 ```
 
 ---
@@ -377,7 +492,7 @@ resource "aws_s3_bucket" "replica" {
 terraform {
   backend "s3" {
     bucket  = "my-terraform-state"
-    key     = "prod/network/terraform.tfstate"
+    key     = "networking-spoke/terraform.tfstate"
     region  = "us-east-1"
     encrypt = true
 
@@ -395,14 +510,7 @@ terraform {
 | Enable encryption (`encrypt = true`) | State contains sensitive values in plaintext |
 | Use `use_lockfile = true` | Prevents concurrent applies from corrupting state |
 | Never hardcode AWS credentials in backend block | They end up in `.terraform/` which may be committed |
-| Use separate state files per environment | Blast radius isolation — a bad `prod` apply can't touch `dev` state |
-
-### State File Naming Convention
-
-```
-<account>/<region>/<environment>/<component>/terraform.tfstate
-# e.g.: 123456789/us-east-1/prod/network/terraform.tfstate
-```
+| Use workspaces for per-environment state isolation | Blast radius isolation — a bad `prod` apply can't touch `dev` state |
 
 ---
 
@@ -425,11 +533,6 @@ data "aws_ami" "amazon_linux" {
     name   = "name"
     values = ["al2023-ami-*-x86_64"]
   }
-}
-
-resource "aws_instance" "app" {
-  ami       = data.aws_ami.amazon_linux.id
-  subnet_id = data.aws_vpc.selected.id
 }
 ```
 
@@ -458,15 +561,6 @@ Generate a resource config scaffold automatically:
 terraform plan -generate-config-out=generated.tf
 # Review generated.tf, clean it up, then run terraform apply
 ```
-
-### Legacy CLI Import
-
-```bash
-# One-off import — does not add an import block to config
-terraform import aws_instance.web i-1234567890abcdef0
-```
-
-Use the `import` block approach for new imports — it's repeatable and reviewable in PRs.
 
 ---
 
@@ -510,9 +604,6 @@ terraform state show aws_instance.web
 # Remove a resource from state without destroying the real resource
 terraform state rm aws_instance.web
 
-# Move a resource address within state (pre-1.5 refactor method)
-terraform state mv aws_instance.old aws_instance.new
-
 # Pull remote state to stdout
 terraform state pull
 
@@ -535,35 +626,13 @@ terraform destroy       # Destroy all managed resources
 terraform console       # Interactive expression evaluator — great for debugging
 terraform output        # Print output values
 terraform output -json  # Machine-readable outputs
-```
 
----
-
-## Workspaces
-
-Workspaces let you use the same configuration for multiple environments with isolated state:
-
-```bash
+# Workspace commands
 terraform workspace new staging
 terraform workspace select prod
 terraform workspace list
+terraform workspace show    # Show current workspace
 ```
-
-Reference the current workspace in config:
-
-```hcl
-locals {
-  env = terraform.workspace  # "default", "staging", "prod"
-
-  instance_type = {
-    default = "t3.micro"
-    staging = "t3.small"
-    prod    = "t3.large"
-  }[terraform.workspace]
-}
-```
-
-> Prefer separate root modules per environment over workspaces for large production setups — workspaces share the same code, which makes environment-specific config awkward and risky.
 
 ---
 
@@ -573,10 +642,11 @@ locals {
 
 ```hcl
 locals {
-  name_prefix = "${var.project}-${var.environment}-${var.region}"
+  environment = terraform.workspace
+  name_prefix = "${var.project}-${local.environment}"
   common_tags = {
     Project     = var.project
-    Environment = var.environment
+    Environment = local.environment
     ManagedBy   = "terraform"
     Repository  = "github.com/myorg/infra"
   }
@@ -589,7 +659,7 @@ locals {
 - Mark all secret variables and outputs `sensitive = true`
 - Enable S3 bucket versioning and encryption for state
 - Use `prevent_destroy = true` on stateful resources (databases, S3 buckets with data)
-- Pin provider versions (`~> 5.0`, not `>= 5.0`) to avoid surprise breaking changes
+- Pin provider versions (`~> 6.0`, not `>= 6.0`) to avoid surprise breaking changes
 
 ### Code Quality
 
@@ -618,3 +688,4 @@ locals {
 | `cycle` error | Circular dependency between resources | Introduce an intermediate data source or break the cycle with explicit outputs |
 | Backend config changed | Backend config differs from initialized state | Run `terraform init -reconfigure` |
 | `│ Error: Unsupported argument` | Provider version doesn't support an attribute | Update provider version or remove the unsupported attribute |
+| Module input uses computed value in `toset()` | Some module inputs (e.g. `kms` `aliases`) can't accept computed values | Use the `computed_aliases` (or similar) alternative input instead |
