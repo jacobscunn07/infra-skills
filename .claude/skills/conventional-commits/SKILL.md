@@ -21,7 +21,7 @@ Commit messages follow the [Conventional Commits 1.0.0](https://www.conventional
 
 - **type** — required. Describes the category of change (see types below).
 - **scope** — optional. A noun in parentheses describing the section of the codebase affected (e.g., `vpc`, `rds`, `iam`).
-- **description** — required. Short imperative summary. Lowercase. No trailing period.
+- **description** — required. Short imperative summary. Capitalised first letter. No trailing period.
 - **body** — optional. Free-form explanation of *why* (not what). Separated from description by a blank line.
 - **footer(s)** — optional. One or more `Token: value` lines. Separated from body (or description if no body) by a blank line. `BREAKING CHANGE:` is a special footer.
 
@@ -49,7 +49,7 @@ Commit messages follow the [Conventional Commits 1.0.0](https://www.conventional
 
 Breaking changes must be indicated in **one of two ways** (or both):
 
-1. Append `!` after the type/scope: `feat(iam)!: replace inline policies with managed policies`
+1. Append `!` after the type/scope: `feat(iam)!: Replace inline policies with managed policies`
 2. Add a `BREAKING CHANGE:` footer with a description of what breaks and how to migrate.
 
 Both can be used together for maximum clarity.
@@ -60,12 +60,12 @@ Both can be used together for maximum clarity.
 
 Simple:
 ```
-fix(sg): correct egress rule CIDR for app tier
+fix(sg): Correct egress rule CIDR for app tier
 ```
 
 With scope and body:
 ```
-feat(rds): add Aurora Serverless v2 cluster
+feat(rds): Add Aurora Serverless v2 cluster
 
 Replaces the provisioned RDS instance in dev with Aurora Serverless v2
 to reduce idle costs. Staging and prod remain provisioned.
@@ -73,7 +73,7 @@ to reduce idle costs. Staging and prod remain provisioned.
 
 Breaking change with `!` and footer:
 ```
-feat(vpc)!: migrate from single NAT gateway to per-AZ
+feat(vpc)!: Migrate from single NAT gateway to per-AZ
 
 BREAKING CHANGE: NAT gateway EIPs will be destroyed and recreated.
 Existing connections through the NAT gateway will be interrupted during
@@ -82,7 +82,7 @@ apply. Run during a maintenance window.
 
 Revert:
 ```
-revert: feat(ecs): add container insights
+revert: Revert feat(ecs): Add container insights
 
 Reverts commit a1b2c3d. Container Insights is generating unexpected
 CloudWatch costs in dev.
@@ -90,12 +90,12 @@ CloudWatch costs in dev.
 
 No scope needed:
 ```
-chore: bump AWS provider to 5.54.0
+chore: Bump AWS provider to 5.54.0
 ```
 
 Multiple footers:
 ```
-fix(kms): rotate data key on next encrypt call
+fix(kms): Rotate data key on next encrypt call
 
 Reviewed-by: Jane Smith
 Refs: #42
