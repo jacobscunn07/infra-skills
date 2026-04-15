@@ -16,8 +16,8 @@ data "aws_caller_identity" "current" {}
 # ─── KMS KEY ─────────────────────────────────────────────────────────────────
 
 module "kms" {
-  source  = "terraform-aws-modules/kms/aws"
-  version = "~> 4.0"
+  # terraform-aws-modules/kms/aws v4.2.0
+  source = "github.com/terraform-aws-modules/terraform-aws-kms?ref=407e3db34a65b384c20ef718f55d9ceacb97a846"
 
   description             = "Encryption key for ${local.name_prefix} data tier (Aurora, S3)"
   deletion_window_in_days = 30
@@ -36,8 +36,8 @@ module "kms" {
 # ─── AURORA CLUSTER (SERVERLESS V2, POSTGRESQL) ──────────────────────────────
 
 module "aurora" {
-  source  = "terraform-aws-modules/rds-aurora/aws"
-  version = "~> 10.0"
+  # terraform-aws-modules/rds-aurora/aws v10.2.0
+  source = "github.com/terraform-aws-modules/terraform-aws-rds-aurora?ref=2c3946c8191278ad974bbb077da5e03986e24f4d"
 
   name           = "${local.name_prefix}-aurora"
   engine         = "aurora-postgresql"
@@ -228,8 +228,8 @@ resource "aws_db_proxy_target" "main" {
 # ─── S3 APP DATA BUCKET ──────────────────────────────────────────────────────
 
 module "s3_app_data" {
-  source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "~> 5.0"
+  # terraform-aws-modules/s3-bucket/aws v5.12.0
+  source = "github.com/terraform-aws-modules/terraform-aws-s3-bucket?ref=6c5e082b5d2fde77cb59c387a7f553dd2ed5da29"
 
   bucket = "${local.name_prefix}-app-data-${var.app_data_bucket_suffix}"
 

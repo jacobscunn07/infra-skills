@@ -36,7 +36,7 @@ Before writing any raw `resource` block, ask: does a `terraform-aws-modules/*` m
 ### Module-First Decision Tree
 
 1. Search the Terraform registry (via the `terraform-registry` MCP) for a matching `terraform-aws-modules/*` module.
-2. If a module exists: use it, pin to `~> <major>.0`, and configure only the inputs you need.
+2. If a module exists: use it, pin to a **commit hash** via the GitHub source URL, and configure only the inputs you need.
 3. If no module exists **or** the module doesn't support your use case: write raw resources.
 4. **Never** write raw resources for VPCs, S3 buckets, KMS keys, RDS/Aurora, ECS clusters, IAM roles, or security groups when a `terraform-aws-modules` module covers the use case.
 
@@ -60,10 +60,13 @@ Before writing any raw `resource` block, ask: does a `terraform-aws-modules/*` m
 ### Module Calling Pattern
 
 ```hcl
-# Query the MCP for the latest version before writing this.
+# 1. Query the MCP for the latest version tag.
+# 2. Resolve the tag to a commit hash:
+#      gh api repos/terraform-aws-modules/terraform-aws-vpc/git/ref/tags/v6.6.1 --jq '.object.sha'
+# 3. Pin to the commit hash — never a tag ref or version constraint.
 module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 6.0"   # Pin to major; allows patch/minor updates
+  # terraform-aws-modules/vpc/aws v6.6.1
+  source = "github.com/terraform-aws-modules/terraform-aws-vpc?ref=3ffbd46fb1c7733e1b34d8666893280454e27436"
 
   name = "${local.name_prefix}-vpc"
   cidr = var.vpc_cidr
@@ -95,10 +98,10 @@ output "vpc_id" {
 
 - One responsibility per module — don't create a "mega-module" for an entire environment
 - Pass in all IDs/ARNs as variables — never hardcode resource identifiers inside a module
-- Always pin registry modules to a major version constraint (`~> 6.0`, not `>= 6.0`)
+- **Always pin modules to a commit hash** via `github.com/<org>/<repo>?ref=<sha>` — never use a registry `version` constraint or a tag ref
 - Expose outputs for any resource attribute callers might need
 - Mark outputs `sensitive = true` if they expose secrets
-- **Always query the `terraform-registry` MCP for the latest version** before writing a `source` + `version` block
+- **Always query the `terraform-registry` MCP for the latest version**, then resolve the version tag to a commit hash via the GitHub API before writing a `source` block
 
 ---
 
@@ -659,7 +662,7 @@ locals {
 - Mark all secret variables and outputs `sensitive = true`
 - Enable S3 bucket versioning and encryption for state
 - Use `prevent_destroy = true` on stateful resources (databases, S3 buckets with data)
-- Pin provider versions (`~> 6.0`, not `>= 6.0`) to avoid surprise breaking changes
+- Pin provider versions (`~> 6.0`, not `>= 6.0`) to avoid surprise breaking changes — for modules, use a commit hash instead of any version constraint
 
 ### Code Quality
 
