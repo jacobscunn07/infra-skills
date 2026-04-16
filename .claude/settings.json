@@ -15,6 +15,11 @@
           },
           {
             "type": "command",
+            "command": "bash -c 'CMD=\"$1\"; if echo \"$CMD\" | grep -q \"git commit\"; then BRANCH=$(git branch --show-current 2>/dev/null); if [ \"$BRANCH\" = \"main\" ] || [ \"$BRANCH\" = \"master\" ]; then echo \"BLOCKED: Cannot commit directly to the \\\"$BRANCH\\\" branch. Create a feature branch first (e.g., git checkout -b <feature-branch>).\"; exit 1; fi; fi' -- \"{{command}}\"",
+            "description": "Block git commits on main/master — use a feature branch instead"
+          },
+          {
+            "type": "command",
             "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); cmd=d.get('tool_input',{}).get('command','?'); parts=cmd.split(); proj=next((os.path.basename(parts[i+1].rstrip('/')) for i,p in enumerate(parts[:-1]) if p=='cd'),'unknown'); chdir=next((p.split('=',1)[1].rstrip('/') for p in parts if p.startswith('-chdir=')),''); proj=os.path.basename(chdir) if chdir else proj; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); tf_flag=' [project:'+proj+']' if any(t in cmd for t in ['terraform','tofu']) else ''; open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Bash]'+tf_flag+' '+cmd[:200]+'\\n')\"",
             "description": "Log all Bash tool calls to <repo-root>/.claude/logs/tool-activity.log; include [project:<name>] for terraform commands"
           }
