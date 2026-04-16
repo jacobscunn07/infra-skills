@@ -6,7 +6,7 @@ data "terraform_remote_state" "networking" {
 
   config = {
     bucket = var.networking_state_bucket
-    key    = "networking-spoke/terraform.tfstate"
+    key    = "network-spoke/terraform.tfstate"
     region = var.networking_state_region
   }
 }
