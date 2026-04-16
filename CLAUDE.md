@@ -130,6 +130,8 @@ Shared memory lives in `.claude/memory/`. Use it to record decisions and context
 - **Commit messages:** Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) — invoke the `/conventional-commits` skill for format, type selection, and breaking change markers.
 - **Branch naming:** `<jira-ticket>/<slug>` (e.g., `INFRA-123/vpc-peering`, `INFRA-456/sg-egress-rule`). The slug should be a short, lowercase, hyphen-separated description of the change.
 - PRs touching IAM, security groups, or KMS require human review before merge.
+- **Confirm before committing:** Always surface the proposed commit message and staged changes, then wait for explicit human confirmation before running `git commit`.
+- **Never commit to main:** All commits must be on a feature branch. If the current branch is `main` or `master`, stop and ask the human to create or switch to a feature branch before proceeding.
 
 ### Documentation
 
