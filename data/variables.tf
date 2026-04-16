@@ -29,12 +29,12 @@ variable "cost_center" {
 
 variable "networking_state_bucket" {
   type        = string
-  description = "S3 bucket containing the networking-spoke Terraform state."
+  description = "S3 bucket containing the network-spoke Terraform state."
 }
 
 variable "networking_state_region" {
   type        = string
-  description = "Region of the networking-spoke state bucket."
+  description = "Region of the network-spoke state bucket."
   default     = "us-east-1"
 }
 

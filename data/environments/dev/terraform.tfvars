@@ -3,7 +3,7 @@ aws_region  = "us-east-1"
 owner       = "platform-team"
 cost_center = "eng-platform"
 
-# Networking remote state — must match the backend bucket in networking-spoke/backend.tf.
+# Networking remote state — must match the backend bucket in network-spoke/backend.tf.
 networking_state_bucket = "your-terraform-state-bucket"
 networking_state_region = "us-east-1"
 

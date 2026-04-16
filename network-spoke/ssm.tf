@@ -5,7 +5,7 @@
 # retrieve them without depending on the Terraform state backend.
 #
 # Path convention: /<project>/<environment>/<component>/<output-name>
-# Example:         /myapp/prod/networking-spoke/vpc_id
+# Example:         /myapp/prod/network-spoke/vpc_id
 #
 # Encoding convention:
 #   - All values are JSON-encoded for type-safe, consistent parsing.
@@ -13,7 +13,7 @@
 #   - Lists / maps:   native JSON array / object
 
 locals {
-  ssm_prefix = "/${var.project}/${local.environment}/networking-spoke"
+  ssm_prefix = "/${var.project}/${local.environment}/network-spoke"
 }
 
 resource "aws_ssm_parameter" "vpc_id" {
