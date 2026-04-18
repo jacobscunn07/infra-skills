@@ -58,22 +58,10 @@ inputs:
 outputs:
   matrix:
     description: >
-      JSON matrix of { project, workspace } pairs suitable for use with
-      strategy.matrix.
+      JSON matrix of { project, workspaces[] } entries — one per changed (or
+      filtered) project with its eligible workspaces as an array.  Workspaces
+      are filtered by ci.yaml enabled flags and the release_only setting.
     value: ${{ steps.build.outputs.matrix }}
-  projects_matrix:
-    description: >
-      JSON matrix of unique { project } entries — one per changed project
-      regardless of how many workspaces it contains.  Use this for jobs that
-      are workspace-independent (e.g. terraform fmt, terraform validate).
-    value: ${{ steps.build.outputs.projects_matrix }}
-  projects_with_workspaces_matrix:
-    description: >
-      JSON matrix of { project, workspaces[] } entries — one per changed
-      project with its eligible workspaces as an array.  Use this when
-      calling a reusable workflow once per project that fans out the plan
-      matrix over workspaces internally.
-    value: ${{ steps.build.outputs.projects_with_workspaces_matrix }}
   has_changes:
     description: >
       "true" when the matrix contains at least one entry; "false" otherwise.
@@ -339,24 +327,15 @@ runs:
 
           // ── Emit outputs ──────────────────────────────────────────────────
 
-          const matrix = JSON.stringify({ include: matrixEntries });
-          core.info(`Final matrix: ${matrix}`);
-          core.setOutput('matrix', matrix);
-
-          const uniqueProjectDirs   = [...new Set(matrixEntries.map(e => e.project))];
-          const projectsMatrix      = JSON.stringify({ include: uniqueProjectDirs.map(p => ({ project: p })) });
-          core.info(`Projects matrix: ${projectsMatrix}`);
-          core.setOutput('projects_matrix', projectsMatrix);
-
           const projectWorkspacesMap = {};
           for (const { project, workspace } of matrixEntries) {
             if (!projectWorkspacesMap[project]) projectWorkspacesMap[project] = [];
             projectWorkspacesMap[project].push(workspace);
           }
-          const projectsWithWorkspacesMatrix = JSON.stringify({
+          const matrix = JSON.stringify({
             include: Object.entries(projectWorkspacesMap).map(([project, workspaces]) => ({ project, workspaces })),
           });
-          core.info(`Projects-with-workspaces matrix: ${projectsWithWorkspacesMatrix}`);
-          core.setOutput('projects_with_workspaces_matrix', projectsWithWorkspacesMatrix);
+          core.info(`Matrix: ${matrix}`);
+          core.setOutput('matrix', matrix);
 
           core.setOutput('has_changes', String(matrixEntries.length > 0));

@@ -69,17 +69,12 @@ jobs:
           workspace: ${{ steps.target.outputs.workspace }}
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # One job per project × workspace entry produced by setup.
-  # dflook/terraform-plan handles init, workspace selection, and plan.
-  # When triggered outside a PR context the plan output is written to the
-  # job step summary (visible in the workflow run UI) rather than a PR comment.
-  # Plans are read-only — locking is disabled to avoid dangling locks if the
-  # job is cancelled mid-run.
+  # One call to the reusable workflow per project entry produced by setup.
+  # Each call fans out plan jobs over the project's workspaces internally,
+  # grouping per-workspace results together in the GitHub Actions UI.
   # ─────────────────────────────────────────────────────────────────────────────
   plan:
-    name: "${{ matrix.project }} / ${{ matrix.workspace }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: "${{ matrix.project }}"
     needs: setup
     if: needs.setup.outputs.has_entries == 'true'
     permissions:
@@ -90,24 +85,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
-          mask-aws-account-id: 'true'
-
-      - name: Terraform Plan
-        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          path: ${{ matrix.project }}
-          workspace: ${{ matrix.workspace }}
-          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
-          label: "${{ matrix.project }} / ${{ matrix.workspace }}"
-          lock: false
+    uses: ./.github/workflows/tf-project-plan.yml
+    with:
+      project: ${{ matrix.project }}
+      workspaces: ${{ toJSON(matrix.workspaces) }}
+    secrets: inherit

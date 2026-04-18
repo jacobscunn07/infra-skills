@@ -1,0 +1,62 @@
+name: Terraform Project Plan
+
+# Reusable workflow — called once per project by tf-plan.yaml.
+# Runs a plan for each workspace in the project.  Intended for on-demand
+# use outside of a PR context, so no PR comment permissions are requested.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Terraform project directory to plan.
+        type: string
+        required: true
+      workspaces:
+        description: JSON array of workspace names to plan (e.g. '["dev","prod"]').
+        type: string
+        required: true
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One plan job per workspace.  When triggered outside a PR context the plan
+  # output is written to the job step summary (visible in the workflow run UI)
+  # rather than a PR comment.  Plans are read-only — locking is disabled to
+  # avoid dangling locks if the job is cancelled mid-run.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "${{ matrix.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJSON(inputs.workspaces) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Plan
+        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ matrix.workspace }}
+          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
+          lock: false

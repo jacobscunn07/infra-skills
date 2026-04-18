@@ -1,0 +1,102 @@
+name: Terraform Project Drift Detection
+
+# Reusable workflow — called once per project by tf-drift.yaml.
+# Runs drift detection for each workspace in the project and uploads a
+# metadata artifact for any workspace where drift is found.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Terraform project directory to check for drift.
+        type: string
+        required: true
+      workspaces:
+        description: JSON array of workspace names to check (e.g. '["dev","prod"]').
+        type: string
+        required: true
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One job per workspace.  Uses dflook/terraform-check — purpose-built for
+  # drift detection.  It fails the step when changes are present and sets
+  # failure-reason: changes-to-apply.  continue-on-error: true lets the job
+  # survive drift so all workspaces are checked regardless of whether any one
+  # has changes.  A separate step re-fails the job for genuine Terraform errors.
+  #
+  # Drift metadata artifacts (name: drift__<project>__<workspace>) are uploaded
+  # when drift is found so the outer tf-drift.yaml report job can aggregate them.
+  # ─────────────────────────────────────────────────────────────────────────────
+  detect-drift:
+    name: "${{ matrix.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJSON(inputs.workspaces) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Check
+        id: check
+        uses: dflook/terraform-check@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2.2.3
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ matrix.workspace }}
+          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+
+      - name: Fail on Terraform error
+        if: steps.check.outcome == 'failure' && steps.check.outputs.failure-reason != 'changes-to-apply'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          PROJECT: ${{ inputs.project }}
+          WORKSPACE: ${{ matrix.workspace }}
+        with:
+          script: |
+            core.setFailed(`Terraform check failed for ${process.env.PROJECT}/${process.env.WORKSPACE}`);
+
+      - name: Write drift metadata
+        if: steps.check.outputs.failure-reason == 'changes-to-apply'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          PROJECT: ${{ inputs.project }}
+          WORKSPACE: ${{ matrix.workspace }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const meta = JSON.stringify({
+              project: process.env.PROJECT,
+              workspace: process.env.WORKSPACE,
+            });
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'drift-meta.json'), meta);
+
+      - name: Upload drift artifact
+        if: steps.check.outputs.failure-reason == 'changes-to-apply'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          # Double-underscore separates project from workspace so names with
+          # hyphens (e.g. network-spoke) are unambiguous when parsing.
+          name: drift__${{ inputs.project }}__${{ matrix.workspace }}
+          path: ${{ runner.temp }}/drift-meta.json
+          retention-days: 30

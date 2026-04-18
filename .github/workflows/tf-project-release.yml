@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      matrix:        ${{ steps.workspace-matrix.outputs.matrix }}
+      workspaces: ${{ steps.extract-workspaces.outputs.workspaces }}
       has_workspaces: ${{ steps.workspace-matrix.outputs.has_changes }}
 
     steps:
@@ -48,13 +48,24 @@ jobs:
           project: ${{ inputs.project }}
           release_only: "true"
 
+      # The composite action returns { project, workspaces[] } — extract the
+      # workspaces array from the single entry (project is already filtered).
+      - name: Extract workspaces from matrix
+        id: extract-workspaces
+        if: steps.workspace-matrix.outputs.has_changes == 'true'
+        env:
+          MATRIX: ${{ steps.workspace-matrix.outputs.matrix }}
+        run: |
+          WORKSPACES=$(echo "$MATRIX" | jq -c '.include[0].workspaces')
+          echo "workspaces=$WORKSPACES" >> "$GITHUB_OUTPUT"
+
   # ───────────────────────────────────────────────────────────────────────────
   # One plan job per continuous-deploy workspace.  Plans are read-only so
   # locking is disabled.  dflook/terraform-plan saves the plan artifact (keyed
   # by label) so the apply job downstream applies exactly what was reviewed.
   # ───────────────────────────────────────────────────────────────────────────
   plan:
-    name: "plan: ${{ matrix.project }} / ${{ matrix.workspace }}"
+    name: "plan: ${{ inputs.project }} / ${{ matrix.workspace }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: setup
@@ -65,7 +76,8 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+      matrix:
+        workspace: ${{ fromJSON(needs.setup.outputs.workspaces) }}
 
     steps:
       - name: Checkout
@@ -83,10 +95,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path: ${{ matrix.project }}
+          path: ${{ inputs.project }}
           workspace: ${{ matrix.workspace }}
           var_file: environments/${{ matrix.workspace }}/terraform.tfvars
-          label: "${{ matrix.project }} / ${{ matrix.workspace }}"
+          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
           lock: false
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -102,14 +114,14 @@ jobs:
   # state file (e.g. a re-run overlapping a still-running apply).
   # ───────────────────────────────────────────────────────────────────────────
   apply:
-    name: "apply: ${{ matrix.project }} / ${{ matrix.workspace }}"
+    name: "apply: ${{ inputs.project }} / ${{ matrix.workspace }}"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [setup, plan]
     if: needs.setup.outputs.has_workspaces == 'true' && needs.plan.result == 'success'
-    environment: "terraform/${{ matrix.project }}/${{ matrix.workspace }}"
+    environment: "terraform/${{ inputs.project }}/${{ matrix.workspace }}"
     concurrency:
-      group: tf-apply-${{ matrix.project }}-${{ matrix.workspace }}
+      group: tf-apply-${{ inputs.project }}-${{ matrix.workspace }}
       cancel-in-progress: false
     permissions:
       id-token: write  # Required for OIDC → AWS
@@ -117,7 +129,8 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+      matrix:
+        workspace: ${{ fromJSON(needs.setup.outputs.workspaces) }}
 
     steps:
       - name: Checkout
@@ -135,8 +148,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path: ${{ matrix.project }}
+          path: ${{ inputs.project }}
           workspace: ${{ matrix.workspace }}
           var_file: environments/${{ matrix.workspace }}/terraform.tfvars
-          label: "${{ matrix.project }} / ${{ matrix.workspace }}"
+          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
           auto_approve: true
