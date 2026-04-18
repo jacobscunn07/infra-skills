@@ -76,7 +76,7 @@ jobs:
       # Fails if any .tf file in the project is not canonical.
       # Authors must run `terraform fmt` locally before pushing.
       - name: Terraform Format Check
-        uses: dflook/terraform-fmt-check@5916842e242f665bf7b70644d706224e665056a  # v2.2.3
+        uses: dflook/terraform-fmt-check@59168426e242f665bf7b70644d706224e665056a  # v2.2.3
         with:
           path: ${{ matrix.project }}
 
