@@ -49,7 +49,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
-    uses: ./.github/workflows/tf-project-drift.yml
+    uses: ./.github/workflows/_tf-project-drift.yaml
     with:
       project: ${{ matrix.project }}
       workspaces: ${{ toJSON(matrix.workspaces) }}

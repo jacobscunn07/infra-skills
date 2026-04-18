@@ -140,7 +140,7 @@ jobs:
     name: Deploy network-spoke
     needs: [setup]
     if: needs.setup.outputs.deploy_network_spoke == 'true'
-    uses: ./.github/workflows/tf-project-release.yml
+    uses: ./.github/workflows/_tf-project-release.yaml
     with:
       project: network-spoke
     secrets: inherit
@@ -164,7 +164,7 @@ jobs:
       always() &&
       needs.setup.outputs.deploy_data == 'true' &&
       needs.deploy-network-spoke.result != 'failure'
-    uses: ./.github/workflows/tf-project-release.yml
+    uses: ./.github/workflows/_tf-project-release.yaml
     with:
       project: data
     secrets: inherit

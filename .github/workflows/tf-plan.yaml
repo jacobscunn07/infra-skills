@@ -85,7 +85,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
-    uses: ./.github/workflows/tf-project-plan.yml
+    uses: ./.github/workflows/_tf-project-plan.yaml
     with:
       project: ${{ matrix.project }}
       workspaces: ${{ toJSON(matrix.workspaces) }}
