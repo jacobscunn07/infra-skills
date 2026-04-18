@@ -42,7 +42,7 @@ jobs:
           path: ${{ inputs.project }}
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Config validation — backend=false skips S3 init, no AWS auth required.
+  # Config validation — no backend config supplied so init skips S3, no AWS auth required.
   # ─────────────────────────────────────────────────────────────────────────────
   validate:
     name: validate
@@ -59,7 +59,6 @@ jobs:
         uses: dflook/terraform-validate@4cef5d8a4b92bcd88486e41e22a42942a382c9d6  # v2.2.3
         with:
           path: ${{ inputs.project }}
-          backend: false
 
   # ─────────────────────────────────────────────────────────────────────────────
   # One plan job per workspace.  Only runs after both fmt and validate pass.
