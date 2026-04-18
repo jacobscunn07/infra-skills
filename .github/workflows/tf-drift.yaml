@@ -73,7 +73,7 @@ jobs:
       # drift — the next step distinguishes drift from real errors.
       - name: Terraform Check
         id: check
-        uses: dflook/terraform-check@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        uses: dflook/terraform-check@f8daa870ddadd8c32950e475f494e40defc0a20a  # v2.2.3
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

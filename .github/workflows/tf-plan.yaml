@@ -101,7 +101,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Terraform Plan
-        uses: dflook/terraform-plan@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        uses: dflook/terraform-plan@f8daa870ddadd8c32950e475f494e40defc0a20a  # v2.2.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
