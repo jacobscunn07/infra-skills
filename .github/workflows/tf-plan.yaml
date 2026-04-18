@@ -1,0 +1,112 @@
+name: Terraform Plan
+
+# On-demand plan for any project and workspace combination.
+# Choosing a "/ all" target plans every workspace discovered under the
+# project's environments/ directory.
+#
+# NOTE: the target dropdown is a static list — add new entries here whenever
+# a new Terraform project (directory with a backend.tf) is added to the repo.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Project and workspace to plan (select '/ all' to plan every workspace)"
+        required: true
+        type: choice
+        options:
+          - data / dev
+          - data / staging
+          - data / prod
+          - data / all
+          - network-spoke / dev
+          - network-spoke / staging
+          - network-spoke / prod
+          - network-spoke / all
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Builds the matrix from the workflow inputs by delegating to the shared
+  # composite action.  The project and workspace inputs are passed directly as
+  # filters — no base_ref is used here because this is an on-demand plan, not
+  # a PR diff.  The action fails fast with a clear message if the requested
+  # project or workspace does not exist in the repo.
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Build plan matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      has_entries: ${{ steps.build-matrix.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Parse "project / workspace" into separate outputs. "all" maps to an
+      # empty workspace string, which tells the matrix action to discover every
+      # workspace under the project's environments/ directory.
+      - name: Parse target
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        with:
+          script: |
+            const [project, workspace] = '${{ inputs.target }}'.split('/').map(s => s.trim());
+            core.setOutput('project', project);
+            core.setOutput('workspace', workspace === 'all' ? '' : workspace);
+
+      - name: Build matrix
+        id: build-matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          project: ${{ steps.target.outputs.project }}
+          workspace: ${{ steps.target.outputs.workspace }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One job per project × workspace entry produced by setup.
+  # dflook/terraform-plan handles init, workspace selection, and plan.
+  # When triggered outside a PR context the plan output is written to the
+  # job step summary (visible in the workflow run UI) rather than a PR comment.
+  # Plans are read-only — locking is disabled to avoid dangling locks if the
+  # job is cancelled mid-run.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "${{ matrix.project }} / ${{ matrix.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: setup
+    if: needs.setup.outputs.has_entries == 'true'
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Terraform Plan
+        uses: dflook/terraform-plan@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ${{ matrix.project }}
+          workspace: ${{ matrix.workspace }}
+          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+          label: "${{ matrix.project }} / ${{ matrix.workspace }}"
+          lock: false

@@ -1,0 +1,70 @@
+name: Terraform Force Unlock
+
+# Emergency escape hatch — releases a stuck Terraform state lock.
+#
+# Only run this when you have confirmed no other process is legitimately
+# holding the lock (e.g. a plan or apply that is still running).  Releasing
+# an active lock while another operation is in progress can corrupt state.
+#
+# How to find the lock ID: the lock ID is printed in the error message when
+# Terraform refuses to run because the state is locked, e.g.:
+#   "Lock Info: ... ID: <lock-id>"
+# It is also readable in the S3 lock file when using native S3 locking.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Project and workspace to unlock"
+        required: true
+        type: choice
+        options:
+          - data / dev
+          - data / staging
+          - data / prod
+          - network-spoke / dev
+          - network-spoke / staging
+          - network-spoke / prod
+      lock_id:
+        description: Lock ID to release (from the Terraform error message)
+        required: true
+        type: string
+
+# Least-privilege defaults — the unlock job elevates only what it needs.
+permissions:
+  contents: read
+
+jobs:
+  unlock:
+    name: "Force unlock: ${{ inputs.target }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Parse "project / workspace" into separate outputs for use in later steps.
+      - name: Parse target
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        with:
+          script: |
+            const [project, workspace] = '${{ inputs.target }}'.split('/').map(s => s.trim());
+            core.setOutput('project', project);
+            core.setOutput('workspace', workspace);
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Terraform Force Unlock
+        uses: dflook/terraform-unlock-state@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        with:
+          path: ${{ steps.target.outputs.project }}
+          workspace: ${{ steps.target.outputs.workspace }}
+          lock_id: ${{ inputs.lock_id }}

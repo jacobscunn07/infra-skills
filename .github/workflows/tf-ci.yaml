@@ -1,0 +1,164 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+# Cancel any in-progress run for the same PR when a new commit is pushed,
+# avoiding stale plan comments and wasted runner minutes.
+concurrency:
+  group: tf-plan-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Discovers which Terraform projects have changed in this PR using the shared
+  # terraform-matrix composite action.  base_ref is passed so only projects
+  # with changed files are included.  fetch-depth: 0 is required on checkout
+  # so the merge base is available for the git diff inside the action.
+  #
+  # Note: changes to shared modules/ do not automatically trigger plans for
+  # dependent projects — add an explicit modules/ → project mapping if needed.
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Discover changed projects and workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      projects_matrix: ${{ steps.build-matrix.outputs.projects_matrix }}
+      has_changes: ${{ steps.build-matrix.outputs.has_changes }}
+
+    steps:
+      # Full history is required so git can find the merge base between HEAD
+      # and the PR's base branch when computing the changed file list.
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Build dynamic matrix
+        id: build-matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          base_ref: ${{ github.base_ref }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # fmt and validate are workspace-independent — one job per changed project.
+  # The two jobs run in parallel so formatting and config errors surface at the
+  # same time rather than sequentially.  Both must pass before plan is allowed
+  # to run.  fail-fast: false ensures every project is checked in one pass.
+  # ─────────────────────────────────────────────────────────────────────────────
+  fmt:
+    name: "fmt: ${{ matrix.project }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: setup
+    if: needs.setup.outputs.has_changes == 'true'
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.projects_matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Fails if any .tf file in the project is not canonical.
+      # Authors must run `terraform fmt` locally before pushing.
+      - name: Terraform Format Check
+        uses: dflook/terraform-fmt-check@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        with:
+          path: ${{ matrix.project }}
+
+  validate:
+    name: "validate: ${{ matrix.project }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: setup
+    if: needs.setup.outputs.has_changes == 'true'
+    permissions:
+      id-token: write # Required for OIDC → AWS (needed for provider init)
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.projects_matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Validates configuration syntax and internal consistency (does not
+      # contact the provider API — no real AWS calls are made).
+      - name: Terraform Validate
+        uses: dflook/terraform-validate@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        with:
+          path: ${{ matrix.project }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One job per changed project × workspace combination discovered by setup.
+  # Only runs when the validate gate above passes for that combination.
+  # Uses dflook/terraform-plan which:
+  #   • runs terraform init, workspace select, and plan
+  #   • posts the plan diff as a comment on the PR (updated on re-run)
+  #   • fails the job when Terraform itself errors (bad config, provider error)
+  # fail-fast: false ensures every combination is planned regardless of whether
+  # any one fails, so the PR author gets a complete picture in one pass.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "${{ matrix.project }} / ${{ matrix.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [setup, fmt, validate]
+    if: needs.setup.outputs.has_changes == 'true'
+    permissions:
+      id-token: write      # Required for OIDC → AWS
+      contents: read
+      pull-requests: write # Required for dflook/terraform-plan PR comments
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # dflook/terraform-plan handles init, workspace selection, and plan
+      # internally, then posts a collapsible plan comment on the PR.
+      # The comment is updated (not re-posted) on each subsequent push to
+      # the same PR, keeping the comment thread clean.
+      - name: Terraform Plan
+        uses: dflook/terraform-plan@8abe57e9caec11de4046a8e9bcc74bb467e33478  # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ${{ matrix.project }}
+          workspace: ${{ matrix.workspace }}
+          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+          label: "${{ matrix.project }} / ${{ matrix.workspace }}"
+          # Plans are read-only — locking is unnecessary and creates a risk of
+          # dangling locks if the job is cancelled mid-run by concurrency controls.
+          lock: false

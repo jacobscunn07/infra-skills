@@ -1,0 +1,173 @@
+name: Terraform Release
+
+# Triggered on every push to main (i.e. after a PR is merged).
+# A setup job determines which projects have relevant changes, then calls the
+# shared tf-project-release workflow for each project in dependency order.
+#
+# Dependency ordering is expressed explicitly via `needs:` between project
+# jobs — if project B depends on project A, B's job lists A's job in `needs:`.
+# The order here must match the project-dependencies declared in each ci.yaml.
+#
+# To add a new project:
+#   1. Add a `shouldDeploy('<project>')` call in the setup gate script.
+#   2. Add an output line to the setup job for `deploy_<project>`.
+#   3. Add a new job calling tf-project-release.yml with the correct `needs:`.
+on:
+  push:
+    branches: [main]
+
+# Queue releases — never cancel a deployment already in progress.
+# A cancelled apply risks leaving infrastructure in a half-applied state.
+concurrency:
+  group: tf-release
+  cancel-in-progress: false
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Runs once before any project deployment.  For each project, checks whether
+  # the changed files (since the last push to main) are in that project's own
+  # directory OR in any of its declared project-dependencies directories.
+  # Outputs one boolean flag per project to gate the downstream workflow calls.
+  #
+  # fetch-depth: 0 is required so git can resolve github.event.before (it may
+  # not be present in a shallow clone).
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Determine which projects to deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      deploy_network_spoke: ${{ steps.gate.outputs.deploy_network_spoke }}
+      deploy_data:          ${{ steps.gate.outputs.deploy_data }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute per-project deploy flags
+        id: gate
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            const baseSha  = (process.env.BASE_SHA || '').trim();
+            const NULL_SHA = '0000000000000000000000000000000000000000';
+
+            // On the very first push to the branch the before-SHA is all zeros,
+            // meaning there is no meaningful base to diff against.  Treat this
+            // as "everything changed" so all projects are deployed.
+            if (!baseSha || baseSha === NULL_SHA) {
+              core.info('First push to branch — deploying all projects.');
+              core.setOutput('deploy_network_spoke', 'true');
+              core.setOutput('deploy_data',          'true');
+              return;
+            }
+
+            // Collect the files that changed in this merge.
+            const { stdout } = await exec.getExecOutput(
+              'git', ['diff', '--name-only', `${baseSha}...HEAD`],
+              { silent: true },
+            );
+            const changedFiles = stdout.trim().split('\n').filter(Boolean);
+            core.info('Changed files:\n' + changedFiles.join('\n'));
+
+            // Read `project-dependencies:` from a project's ci.yaml.
+            // Uses the same hand-rolled line-parser convention as the
+            // get-project-workspace-matrix action to avoid an external YAML dep.
+            function getProjectDeps(project) {
+              const ciPath = `${project}/ci.yaml`;
+              if (!fs.existsSync(ciPath)) return [];
+
+              const lines = fs.readFileSync(ciPath, 'utf8').split('\n');
+              const deps  = [];
+              let insideDepsBlock = false;
+
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) continue;
+
+                if (/^project-dependencies\s*:/.test(line)) {
+                  // Inline empty list: `project-dependencies: []`
+                  if (/\[\s*\]/.test(line)) return [];
+                  insideDepsBlock = true;
+                  continue;
+                }
+
+                // Any new top-level key ends the block.
+                if (/^\S/.test(line)) {
+                  insideDepsBlock = false;
+                  continue;
+                }
+
+                if (insideDepsBlock) {
+                  const match = line.match(/^\s+-\s+(\S+)/);
+                  if (match) deps.push(match[1]);
+                }
+              }
+
+              return deps;
+            }
+
+            // A project should deploy when any changed file falls inside its
+            // own directory OR inside any of its declared dependency directories.
+            function shouldDeploy(project) {
+              const deps    = getProjectDeps(project);
+              const dirs    = [project, ...deps];
+              const proceed = dirs.some(dir => changedFiles.some(f => f.startsWith(`${dir}/`)));
+              core.info(`${project}: deps=[${deps.join(', ')}], deploy=${proceed}`);
+              return proceed;
+            }
+
+            core.setOutput('deploy_network_spoke', String(shouldDeploy('network-spoke')));
+            core.setOutput('deploy_data',          String(shouldDeploy('data')));
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # network-spoke has no project-dependencies so it runs as soon as setup
+  # completes.  Skipped entirely when its deploy flag is false.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-network-spoke:
+    name: Deploy network-spoke
+    needs: [setup]
+    if: needs.setup.outputs.deploy_network_spoke == 'true'
+    uses: ./.github/workflows/tf-project-release.yml
+    with:
+      project: network-spoke
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # data depends on network-spoke (declared in data/ci.yaml).  This job waits
+  # for deploy-network-spoke to finish before starting.
+  #
+  # always() is required so GitHub does not auto-skip this job when
+  # deploy-network-spoke is skipped (i.e. when only data/ files changed).
+  # != 'failure' permits both the success and skipped results while still
+  # blocking data from deploying if network-spoke errored.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-data:
+    name: Deploy data
+    needs: [setup, deploy-network-spoke]
+    if: |
+      always() &&
+      needs.setup.outputs.deploy_data == 'true' &&
+      needs.deploy-network-spoke.result != 'failure'
+    uses: ./.github/workflows/tf-project-release.yml
+    with:
+      project: data
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read

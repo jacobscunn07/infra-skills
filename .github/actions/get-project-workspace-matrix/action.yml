@@ -1,0 +1,344 @@
+name: Get Project Workspace Matrix
+description: >
+  Discovers Terraform projects and workspaces and emits a GitHub Actions matrix.
+  Projects are identified by a backend.tf at depth 1 in the repo root; workspaces
+  are derived from each project's environments/ subdirectories.
+
+  When base_ref is provided, only projects with files changed relative to that
+  ref are included.  When omitted, all discovered projects are included.
+
+inputs:
+  base_ref:
+    description: >
+      Base branch ref to compare against (e.g. "main"). When provided, only
+      projects that contain files changed relative to this ref are included.
+      The calling workflow must check out the repo with fetch-depth: 0 so that
+      the merge base is available for the git diff.  When omitted, all
+      discovered projects are included.  Mutually exclusive with base_sha —
+      prefer base_sha for push events where the exact before-SHA is available.
+    required: false
+    default: ""
+  base_sha:
+    description: >
+      Exact commit SHA to diff against (e.g. github.event.before on a push
+      event).  When provided, only projects with files changed between this
+      SHA and HEAD are included.  The calling workflow must check out the repo
+      with fetch-depth: 0.  Takes precedence over base_ref when both are set.
+    required: false
+    default: ""
+  project:
+    description: >
+      When provided, only the named project is included in the matrix.
+      The step fails if the project is not found (no backend.tf or no
+      environments/ subdirectory).
+    required: false
+    default: ""
+  workspace:
+    description: >
+      When provided, only the named workspace is included in the matrix.
+      Requires project to also be set.  The step fails if the workspace is
+      not found under the project's environments/ directory.
+    required: false
+    default: ""
+  release_only:
+    description: >
+      When "true", only workspaces with both enabled: true and
+      continuous-deploy: true in the project's ci.yaml are included.
+      Projects without a ci.yaml are skipped entirely.  Use this in
+      post-merge release workflows to restrict auto-deployments to
+      workspaces that have explicitly opted in.
+
+      When "false" (default), workspaces are still filtered by workspace-level
+      enabled: true when a ci.yaml is present — workspaces with enabled: false
+      are always excluded regardless of this input.  Projects with a top-level
+      enabled: false are also always excluded.
+    required: false
+    default: "false"
+
+outputs:
+  matrix:
+    description: >
+      JSON matrix of { project, workspace } pairs suitable for use with
+      strategy.matrix.
+    value: ${{ steps.build.outputs.matrix }}
+  projects_matrix:
+    description: >
+      JSON matrix of unique { project } entries — one per changed project
+      regardless of how many workspaces it contains.  Use this for jobs that
+      are workspace-independent (e.g. terraform fmt, terraform validate).
+    value: ${{ steps.build.outputs.projects_matrix }}
+  has_changes:
+    description: >
+      "true" when the matrix contains at least one entry; "false" otherwise.
+      Use this to guard the dependent job — an empty matrix causes a job error
+      rather than a clean skip.
+    value: ${{ steps.build.outputs.has_changes }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build matrix
+      id: build
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+      env:
+        BASE_REF:         ${{ inputs.base_ref }}
+        BASE_SHA:         ${{ inputs.base_sha }}
+        FILTER_PROJECT:   ${{ inputs.project }}
+        FILTER_WORKSPACE: ${{ inputs.workspace }}
+        RELEASE_ONLY:     ${{ inputs.release_only }}
+      with:
+        script: |
+          const fs   = require('fs');
+          const path = require('path');
+
+          // ── Inputs ────────────────────────────────────────────────────────
+          const inputs = {
+            baseSha:         (process.env.BASE_SHA          || '').trim(),
+            baseRef:         (process.env.BASE_REF          || '').trim(),
+            filterProject:   (process.env.FILTER_PROJECT    || '').trim(),
+            filterWorkspace: (process.env.FILTER_WORKSPACE  || '').trim(),
+            releaseOnly:     process.env.RELEASE_ONLY === 'true',
+          };
+
+          // ── Helpers ───────────────────────────────────────────────────────
+
+          /** Run `git diff --name-only <range>` and return the changed paths as a Set. */
+          async function getChangedFilesBetween(diffRange) {
+            const { stdout } = await exec.getExecOutput(
+              'git', ['diff', '--name-only', diffRange],
+              { silent: true },
+            );
+            return new Set(stdout.trim().split('\n').filter(Boolean));
+          }
+
+          /** Return true when at least one changed file lives inside `projectDir/`. */
+          function projectHasChangedFiles(projectDir, changedFiles) {
+            return [...changedFiles].some(filePath => filePath.startsWith(`${projectDir}/`));
+          }
+
+          /** Return true when a Terraform backend config exists at the project root. */
+          function isTerraformProject(projectDir) {
+            return fs.existsSync(path.join(projectDir, 'backend.tf'));
+          }
+
+          /** Return all direct child directory names under `<projectDir>/environments/`, or null when the directory is absent. */
+          function readProjectWorkspaces(projectDir) {
+            const environmentsDir = path.join(projectDir, 'environments');
+            if (!fs.existsSync(environmentsDir)) return null;
+
+            return fs
+              .readdirSync(environmentsDir, { withFileTypes: true })
+              .filter(entry => entry.isDirectory())
+              .map(entry => entry.name);
+          }
+
+          /**
+           * Parse `<projectDir>/ci.yaml` and return:
+           *   { enabled: boolean, workspaces: { [name]: { enabled, continuousDeploy } } }
+           * Returns null when the file is absent.
+           *
+           * Top-level `enabled` (default true) gates the entire project — when false
+           * the project is skipped by every workflow regardless of workspace settings.
+           * Workspace-level `enabled` and `continuous-deploy` default to true when omitted.
+           *
+           * Expected format (no external YAML library — hand-rolled parser):
+           *
+           *   enabled: true
+           *
+           *   workspaces:
+           *     dev:
+           *       enabled: true
+           *       continuous-deploy: true
+           *     prod:
+           *       enabled: true
+           *       continuous-deploy: false
+           */
+          function readCiConfig(projectDir) {
+            const ciConfigPath = path.join(projectDir, 'ci.yaml');
+            if (!fs.existsSync(ciConfigPath)) return null;
+
+            const lines = fs.readFileSync(ciConfigPath, 'utf8').split('\n');
+            const workspaces = {};
+            let projectEnabled = true;
+            let insideWorkspacesBlock = false;
+            let currentWorkspace = null;
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith('#')) continue;
+
+              // Top-level key (no leading whitespace)
+              if (/^\S/.test(line)) {
+                // Top-level enabled flag
+                const topEnabledMatch = line.match(/^enabled\s*:\s*(true|false)/);
+                if (topEnabledMatch) {
+                  projectEnabled = topEnabledMatch[1] === 'true';
+                }
+                insideWorkspacesBlock = /^workspaces\s*:/.test(line);
+                currentWorkspace = null;
+                continue;
+              }
+
+              if (!insideWorkspacesBlock) continue;
+
+              // Workspace name: exactly 2-space indent followed by a key
+              const wsMatch = line.match(/^  (\w[\w-]*)\s*:/);
+              if (wsMatch && !/^\s{4}/.test(line)) {
+                currentWorkspace = wsMatch[1];
+                workspaces[currentWorkspace] = { enabled: true, continuousDeploy: true };
+                continue;
+              }
+
+              // Workspace properties: deeper indent
+              if (currentWorkspace) {
+                const enabledMatch = line.match(/^\s+enabled\s*:\s*(true|false)/);
+                if (enabledMatch) {
+                  workspaces[currentWorkspace].enabled = enabledMatch[1] === 'true';
+                }
+                const cdMatch = line.match(/^\s+continuous-deploy\s*:\s*(true|false)/);
+                if (cdMatch) {
+                  workspaces[currentWorkspace].continuousDeploy = cdMatch[1] === 'true';
+                }
+              }
+            }
+
+            return { enabled: projectEnabled, workspaces };
+          }
+
+          /** Discover all Terraform project directories at depth-1 in the repo root. */
+          function discoverTerraformProjects(repoRoot) {
+            return fs
+              .readdirSync(repoRoot, { withFileTypes: true })
+              .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+              .map(entry => entry.name)
+              .filter(dirName => isTerraformProject(dirName));
+          }
+
+          /** Emit a `core.setFailed` message when an explicit filter produced no matrix entries. */
+          function reportEmptyMatrixError(filterProject, filterWorkspace) {
+            if (filterProject && filterWorkspace) {
+              core.setFailed(
+                `Workspace "${filterWorkspace}" not found for project "${filterProject}"` +
+                ` — check that environments/${filterWorkspace}/ exists.`
+              );
+            } else if (filterProject) {
+              core.setFailed(
+                `Project "${filterProject}" not found` +
+                ` — does it have a backend.tf and at least one environments/ subdirectory?`
+              );
+            } else {
+              core.info('No Terraform projects found for matrix.');
+            }
+          }
+
+          // ── Resolve changed files ─────────────────────────────────────────
+
+          // base_sha (push event's `github.event.before`) takes precedence over
+          // base_ref so push workflows get an exact diff rather than a branch-tip
+          // comparison.  The all-zeros SHA signals the very first push to a branch,
+          // where no meaningful base exists, so we treat it as "no filter".
+          const NULL_SHA = '0000000000000000000000000000000000000000';
+          let changedFiles = new Set();
+
+          if (inputs.baseSha && inputs.baseSha !== NULL_SHA) {
+            changedFiles = await getChangedFilesBetween(`${inputs.baseSha}...HEAD`);
+            core.info(`Filtering to projects with changes since SHA ${inputs.baseSha}`);
+            core.info('Changed files:\n' + [...changedFiles].join('\n'));
+            core.info('---');
+          } else if (inputs.baseRef) {
+            changedFiles = await getChangedFilesBetween(`origin/${inputs.baseRef}...HEAD`);
+            core.info(`Filtering to projects with changes relative to origin/${inputs.baseRef}`);
+            core.info('Changed files:\n' + [...changedFiles].join('\n'));
+            core.info('---');
+          }
+
+          const isFilteringByChanges = changedFiles.size > 0;
+
+          // ── Build matrix entries ──────────────────────────────────────────
+
+          const matrixEntries = [];
+          const allProjects   = discoverTerraformProjects(process.cwd());
+
+          for (const projectDir of allProjects) {
+            if (inputs.filterProject && projectDir !== inputs.filterProject) continue;
+
+            if (isFilteringByChanges) {
+              if (!projectHasChangedFiles(projectDir, changedFiles)) {
+                core.info(`--- Project: ${projectDir} (no changes, skipping)`);
+                continue;
+              }
+              core.info(`--- Project: ${projectDir} (has changes)`);
+            } else {
+              core.info(`--- Project: ${projectDir}`);
+            }
+
+            const allWorkspaces = readProjectWorkspaces(projectDir);
+            if (allWorkspaces === null) {
+              core.info('  No environments/ directory found, skipping');
+              continue;
+            }
+
+            let eligibleWorkspaces = allWorkspaces
+              .filter(ws => !inputs.filterWorkspace || ws === inputs.filterWorkspace);
+
+            const ciConfig = readCiConfig(projectDir);
+
+            // Top-level enabled: false disables the entire project across all workflows.
+            if (ciConfig !== null && !ciConfig.enabled) {
+              core.info(`  Project disabled in ci.yaml (enabled: false), skipping`);
+              continue;
+            }
+
+            // Always filter by enabled when ci.yaml is present — workspaces with
+            // enabled: false are excluded from every workflow.
+            if (ciConfig !== null) {
+              const enabledWorkspaces = Object.entries(ciConfig.workspaces)
+                .filter(([, cfg]) => cfg.enabled)
+                .map(([name]) => name);
+              core.info(`  Enabled workspaces: ${enabledWorkspaces.join(', ')}`);
+              eligibleWorkspaces = eligibleWorkspaces.filter(ws => enabledWorkspaces.includes(ws));
+            }
+
+            // When release_only is set, additionally require continuous-deploy: true —
+            // only these workspaces are auto-applied on merge.  Projects without a
+            // ci.yaml are skipped entirely (they have not opted in).
+            if (inputs.releaseOnly) {
+              if (ciConfig === null) {
+                core.info(`  No ci.yaml found, skipping (release_only=true)`);
+                continue;
+              }
+              const cdWorkspaces = Object.entries(ciConfig.workspaces)
+                .filter(([, cfg]) => cfg.enabled && cfg.continuousDeploy)
+                .map(([name]) => name);
+              if (cdWorkspaces.length === 0) {
+                core.warning(`  ci.yaml in ${projectDir} has no continuous-deploy workspaces, skipping`);
+                continue;
+              }
+              core.info(`  Continuous-deploy workspaces: ${cdWorkspaces.join(', ')}`);
+              eligibleWorkspaces = eligibleWorkspaces.filter(ws => cdWorkspaces.includes(ws));
+            }
+
+            for (const workspace of eligibleWorkspaces) {
+              core.info(`  Workspace: ${workspace}`);
+              matrixEntries.push({ project: projectDir, workspace });
+            }
+          }
+
+          // ── Validate results ──────────────────────────────────────────────
+
+          if (matrixEntries.length === 0) {
+            reportEmptyMatrixError(inputs.filterProject, inputs.filterWorkspace);
+          }
+
+          // ── Emit outputs ──────────────────────────────────────────────────
+
+          const matrix = JSON.stringify({ include: matrixEntries });
+          core.info(`Final matrix: ${matrix}`);
+          core.setOutput('matrix', matrix);
+
+          const uniqueProjectDirs   = [...new Set(matrixEntries.map(e => e.project))];
+          const projectsMatrix      = JSON.stringify({ include: uniqueProjectDirs.map(p => ({ project: p })) });
+          core.info(`Projects matrix: ${projectsMatrix}`);
+          core.setOutput('projects_matrix', projectsMatrix);
+
+          core.setOutput('has_changes', String(matrixEntries.length > 0));
