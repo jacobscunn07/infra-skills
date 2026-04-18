@@ -138,6 +138,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
+          mask-aws-account-id: 'true'
 
       # dflook/terraform-plan handles init, workspace selection, and plan
       # internally, then posts a collapsible plan comment on the PR.
