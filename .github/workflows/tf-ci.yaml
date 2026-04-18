@@ -87,7 +87,6 @@ jobs:
     needs: setup
     if: needs.setup.outputs.has_changes == 'true'
     permissions:
-      id-token: write # Required for OIDC → AWS (needed for provider init)
       contents: read
 
     strategy:
@@ -98,18 +97,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
-
-      # Validates configuration syntax and internal consistency (does not
-      # contact the provider API — no real AWS calls are made).
+      # backend=false skips S3 backend init — no AWS auth required for validate.
       - name: Terraform Validate
         uses: dflook/terraform-validate@4cef5d8a4b92bcd88486e41e22a42942a382c9d6  # v2.2.3
         with:
           path: ${{ matrix.project }}
+          backend: false
 
   # ─────────────────────────────────────────────────────────────────────────────
   # One job per changed project × workspace combination discovered by setup.
