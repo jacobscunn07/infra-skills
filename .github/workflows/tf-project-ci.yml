@@ -1,0 +1,106 @@
+name: Terraform Project CI
+
+# Reusable workflow — called once per changed project by tf-ci.yaml.
+# Runs fmt and validate in parallel, then fans out plan across all workspaces.
+# Grouping by project (rather than by job type) makes per-project status
+# immediately visible in the GitHub Actions UI.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Terraform project directory to validate and plan.
+        type: string
+        required: true
+      workspaces:
+        description: JSON array of workspace names to plan (e.g. '["dev","prod"]').
+        type: string
+        required: true
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Formatting check — fails if any .tf file is not canonical.
+  # Authors must run `terraform fmt` locally before pushing.
+  # ─────────────────────────────────────────────────────────────────────────────
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Terraform Format Check
+        uses: dflook/terraform-fmt-check@59168426e242f665bf7b70644d706224e665056a  # v2.2.3
+        with:
+          path: ${{ inputs.project }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Config validation — backend=false skips S3 init, no AWS auth required.
+  # ─────────────────────────────────────────────────────────────────────────────
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Terraform Validate
+        uses: dflook/terraform-validate@4cef5d8a4b92bcd88486e41e22a42942a382c9d6  # v2.2.3
+        with:
+          path: ${{ inputs.project }}
+          backend: false
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One plan job per workspace.  Only runs after both fmt and validate pass.
+  # dflook/terraform-plan handles init, workspace selection, and plan, then
+  # posts a collapsible plan diff comment on the PR (updated on re-run).
+  # Plans are read-only — locking is disabled to avoid dangling locks if the
+  # job is cancelled mid-run by concurrency controls.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "${{ matrix.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [fmt, validate]
+    permissions:
+      id-token: write      # Required for OIDC → AWS
+      contents: read
+      pull-requests: write # Required for dflook/terraform-plan PR comments
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJSON(inputs.workspaces) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Plan
+        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ matrix.workspace }}
+          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
+          lock: false
