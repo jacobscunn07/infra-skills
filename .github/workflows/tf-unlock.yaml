@@ -63,7 +63,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Terraform Force Unlock
-        uses: dflook/terraform-unlock-state@f8daa870ddadd8c32950e475f494e40defc0a20a  # v2.2.3
+        uses: dflook/terraform-unlock-state@df4e40f607a2dfe5c8988e42d1291b1cb1a451b7  # v2.2.3
         with:
           path: ${{ steps.target.outputs.project }}
           workspace: ${{ steps.target.outputs.workspace }}

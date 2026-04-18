@@ -76,7 +76,7 @@ jobs:
       # Fails if any .tf file in the project is not canonical.
       # Authors must run `terraform fmt` locally before pushing.
       - name: Terraform Format Check
-        uses: dflook/terraform-fmt-check@f8daa870ddadd8c32950e475f494e40defc0a20a  # v2.2.3
+        uses: dflook/terraform-fmt-check@5916842e242f665bf7b70644d706224e665056a  # v2.2.3
         with:
           path: ${{ matrix.project }}
 
@@ -107,7 +107,7 @@ jobs:
       # Validates configuration syntax and internal consistency (does not
       # contact the provider API — no real AWS calls are made).
       - name: Terraform Validate
-        uses: dflook/terraform-validate@f8daa870ddadd8c32950e475f494e40defc0a20a  # v2.2.3
+        uses: dflook/terraform-validate@4cef5d8a4b92bcd88486e41e22a42942a382c9d6  # v2.2.3
         with:
           path: ${{ matrix.project }}
 
@@ -151,7 +151,7 @@ jobs:
       # The comment is updated (not re-posted) on each subsequent push to
       # the same PR, keeping the comment thread clean.
       - name: Terraform Plan
-        uses: dflook/terraform-plan@f8daa870ddadd8c32950e475f494e40defc0a20a  # v2.2.3
+        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
