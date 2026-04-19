@@ -110,6 +110,7 @@ jobs:
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         env:
+          PROJECT:        ${{ inputs.project }}
           WORKSPACE:      ${{ matrix.workspace }}
           PLAN_STATUS:    ${{ steps.plan.outcome }}
           TO_ADD:         ${{ steps.plan.outputs.to_add }}
@@ -118,8 +119,9 @@ jobs:
           FAILURE_REASON: ${{ steps.plan.outputs.failure-reason }}
         with:
           script: |
-            const fs = require('fs');
-            const ws = process.env.WORKSPACE;
+            const fs      = require('fs');
+            const project = process.env.PROJECT;
+            const ws      = process.env.WORKSPACE;
 
             const resp = await github.rest.actions.listJobsForWorkflowRun({
               owner: context.repo.owner,
@@ -128,7 +130,7 @@ jobs:
               per_page: 100,
             });
             const job = resp.data.jobs.find(
-              j => j.name.endsWith(`/ ${ws}`) || j.name === ws,
+              j => j.name === `${project} / ${ws}` || j.name === ws,
             );
 
             const result = {
