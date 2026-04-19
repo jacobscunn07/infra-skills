@@ -66,6 +66,7 @@ jobs:
       id-token: write      # Required for OIDC → AWS in the plan job
       contents: read
       pull-requests: write # Required for dflook/terraform-plan PR comments
+      actions: read        # Required for reusable workflow to resolve per-job URLs
 
     strategy:
       fail-fast: false
