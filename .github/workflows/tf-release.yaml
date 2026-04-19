@@ -9,9 +9,7 @@ name: Terraform Release
 # The order here must match the project-dependencies declared in each ci.yaml.
 #
 # To add a new project:
-#   1. Add a `shouldDeploy('<project>')` call in the setup gate script.
-#   2. Add an output line to the setup job for `deploy_<project>`.
-#   3. Add a new job calling tf-project-release.yml with the correct `needs:`.
+#   1. Add a new job calling tf-project-release.yml with the correct `needs:`.
 on:
   push:
     branches: [main]
@@ -28,10 +26,10 @@ permissions:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # Runs once before any project deployment.  For each project, checks whether
-  # the changed files (since the last push to main) are in that project's own
-  # directory OR in any of its declared project-dependencies directories.
-  # Outputs one boolean flag per project to gate the downstream workflow calls.
+  # Runs once before any project deployment.  Delegates change-detection and
+  # workspace filtering to the shared get-project-workspace-matrix action
+  # (same action used by tf-ci), then converts its matrix output into a
+  # per-project deploy map consumed by the downstream jobs.
   #
   # fetch-depth: 0 is required so git can resolve github.event.before (it may
   # not be present in a shallow clone).
@@ -43,8 +41,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      deploy_tf_network_spoke: ${{ steps.gate.outputs.deploy_tf_network_spoke }}
-      deploy_tf_data:          ${{ steps.gate.outputs.deploy_tf_data }}
+      deploy: ${{ steps.gate.outputs.deploy }}
 
     steps:
       - name: Checkout
@@ -52,85 +49,32 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Compute per-project deploy flags
+      - name: Build project matrix
+        id: matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          base_sha: ${{ github.event.before }}
+          release_only: 'true'
+
+      - name: Build deploy map
         id: gate
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
         env:
-          BASE_SHA: ${{ github.event.before }}
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
         with:
           script: |
             const fs = require('fs');
 
-            const baseSha  = (process.env.BASE_SHA || '').trim();
-            const NULL_SHA = '0000000000000000000000000000000000000000';
+            const matrix    = JSON.parse(process.env.MATRIX || '{"include":[]}');
+            const toRelease = new Set(matrix.include.map(e => e.project));
 
-            // On the very first push to the branch the before-SHA is all zeros,
-            // meaning there is no meaningful base to diff against.  Treat this
-            // as "everything changed" so all projects are deployed.
-            if (!baseSha || baseSha === NULL_SHA) {
-              core.info('First push to branch — deploying all projects.');
-              core.setOutput('deploy_tf_network_spoke', 'true');
-              core.setOutput('deploy_tf_data',          'true');
-              return;
-            }
+            const projects = fs.readdirSync('.')
+              .filter(d => fs.existsSync(`${d}/backend.tf`))
+              .sort();
 
-            // Collect the files that changed in this merge.
-            const { stdout } = await exec.getExecOutput(
-              'git', ['diff', '--name-only', `${baseSha}...HEAD`],
-              { silent: true },
-            );
-            const changedFiles = stdout.trim().split('\n').filter(Boolean);
-            core.info('Changed files:\n' + changedFiles.join('\n'));
-
-            // Read `project-dependencies:` from a project's ci.yaml.
-            // Uses the same hand-rolled line-parser convention as the
-            // get-project-workspace-matrix action to avoid an external YAML dep.
-            function getProjectDeps(project) {
-              const ciPath = `${project}/ci.yaml`;
-              if (!fs.existsSync(ciPath)) return [];
-
-              const lines = fs.readFileSync(ciPath, 'utf8').split('\n');
-              const deps  = [];
-              let insideDepsBlock = false;
-
-              for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed || trimmed.startsWith('#')) continue;
-
-                if (/^project-dependencies\s*:/.test(line)) {
-                  // Inline empty list: `project-dependencies: []`
-                  if (/\[\s*\]/.test(line)) return [];
-                  insideDepsBlock = true;
-                  continue;
-                }
-
-                // Any new top-level key ends the block.
-                if (/^\S/.test(line)) {
-                  insideDepsBlock = false;
-                  continue;
-                }
-
-                if (insideDepsBlock) {
-                  const match = line.match(/^\s+-\s+(\S+)/);
-                  if (match) deps.push(match[1]);
-                }
-              }
-
-              return deps;
-            }
-
-            // A project should deploy when any changed file falls inside its
-            // own directory OR inside any of its declared dependency directories.
-            function shouldDeploy(project) {
-              const deps    = getProjectDeps(project);
-              const dirs    = [project, ...deps];
-              const proceed = dirs.some(dir => changedFiles.some(f => f.startsWith(`${dir}/`)));
-              core.info(`${project}: deps=[${deps.join(', ')}], deploy=${proceed}`);
-              return proceed;
-            }
-
-            core.setOutput('deploy_tf_network_spoke', String(shouldDeploy('tf-network-spoke')));
-            core.setOutput('deploy_tf_data',          String(shouldDeploy('tf-data')));
+            core.setOutput('deploy', JSON.stringify(
+              Object.fromEntries(projects.map(p => [p, toRelease.has(p)]))
+            ));
 
   # ─────────────────────────────────────────────────────────────────────────────
   # tf-network-spoke has no project-dependencies so it runs as soon as setup
@@ -139,7 +83,7 @@ jobs:
   deploy-tf-network-spoke:
     name: Deploy tf-network-spoke
     needs: [setup]
-    if: needs.setup.outputs.deploy_tf_network_spoke == 'true'
+    if: fromJSON(needs.setup.outputs.deploy)['tf-network-spoke']
     uses: ./.github/workflows/_tf-project-release.yaml
     with:
       project: tf-network-spoke
@@ -162,7 +106,7 @@ jobs:
     needs: [setup, deploy-tf-network-spoke]
     if: |
       always() &&
-      needs.setup.outputs.deploy_tf_data == 'true' &&
+      fromJSON(needs.setup.outputs.deploy)['tf-data'] &&
       needs.deploy-tf-network-spoke.result != 'failure'
     uses: ./.github/workflows/_tf-project-release.yaml
     with:
