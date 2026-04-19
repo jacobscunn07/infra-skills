@@ -76,6 +76,7 @@ jobs:
       id-token: write      # Required for OIDC → AWS
       contents: read
       pull-requests: write # Required for dflook/terraform-plan PR comments
+      actions: read        # Required to resolve per-job URLs for the summary table
 
     strategy:
       fail-fast: false
@@ -118,13 +119,26 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const ws = process.env.WORKSPACE;
+
+            const resp = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const job = resp.data.jobs.find(
+              j => j.name.endsWith(`/ ${ws}`) || j.name === ws,
+            );
+
             const result = {
-              workspace:      process.env.WORKSPACE,
+              workspace:      ws,
               status:         process.env.PLAN_STATUS,
               to_add:         process.env.TO_ADD          || '0',
               to_change:      process.env.TO_CHANGE       || '0',
               to_destroy:     process.env.TO_DESTROY      || '0',
               failure_reason: process.env.FAILURE_REASON  || '',
+              job_url:        job?.html_url               ?? '',
             };
             fs.mkdirSync('/tmp/plan-results', { recursive: true });
             fs.writeFileSync(
@@ -193,13 +207,16 @@ jobs:
 
             const rows = files.map(f => {
               const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+              const wsCell = r.job_url
+                ? `<a href="${r.job_url}">${r.workspace}</a>`
+                : r.workspace;
               if (r.status === 'success') {
-                return [r.workspace, '✅', r.to_add, r.to_change, r.to_destroy];
+                return [wsCell, '✅', r.to_add, r.to_change, r.to_destroy];
               }
               const msg = r.failure_reason
                 ? `❌ Failed: ${r.failure_reason}`
                 : '❌ Failed';
-              return [r.workspace, msg, '', '', ''];
+              return [wsCell, msg, '', '', ''];
             });
 
             await core.summary.addTable([
