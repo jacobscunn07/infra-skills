@@ -94,6 +94,7 @@ jobs:
           mask-aws-account-id: 'true'
 
       - name: Terraform Plan
+        id: plan
         uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,3 +104,111 @@ jobs:
           var_file: environments/${{ matrix.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ matrix.workspace }}"
           lock: false
+
+      - name: Save plan result
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
+        env:
+          WORKSPACE:      ${{ matrix.workspace }}
+          PLAN_STATUS:    ${{ steps.plan.outcome }}
+          TO_ADD:         ${{ steps.plan.outputs.to_add }}
+          TO_CHANGE:      ${{ steps.plan.outputs.to_change }}
+          TO_DESTROY:     ${{ steps.plan.outputs.to_destroy }}
+          FAILURE_REASON: ${{ steps.plan.outputs.failure-reason }}
+        with:
+          script: |
+            const fs = require('fs');
+            const result = {
+              workspace:      process.env.WORKSPACE,
+              status:         process.env.PLAN_STATUS,
+              to_add:         process.env.TO_ADD          || '0',
+              to_change:      process.env.TO_CHANGE       || '0',
+              to_destroy:     process.env.TO_DESTROY      || '0',
+              failure_reason: process.env.FAILURE_REASON  || '',
+            };
+            fs.mkdirSync('/tmp/plan-results', { recursive: true });
+            fs.writeFileSync(
+              `/tmp/plan-results/${result.workspace}.json`,
+              JSON.stringify(result),
+            );
+
+      - name: Upload plan result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: plan-result-${{ inputs.project }}-${{ matrix.workspace }}
+          path: /tmp/plan-results/${{ matrix.workspace }}.json
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Collects per-workspace plan results and writes a single summary table.
+  # Runs even when plan fails or is skipped (fmt/validate failure).
+  # ─────────────────────────────────────────────────────────────────────────────
+  summarize:
+    name: Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [plan]
+    if: always()
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download plan results
+        continue-on-error: true  # Pattern may match nothing when plan was skipped
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: plan-result-${{ inputs.project }}-*
+          path: /tmp/plan-results
+          merge-multiple: true
+
+      - name: Write job summary
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
+        with:
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            await core.summary.addHeading('${{ inputs.project }}', 2);
+
+            if ('${{ needs.plan.result }}' === 'skipped') {
+              await core.summary
+                .addRaw('> [!WARNING]\n> Plan was skipped — fmt or validate did not pass.\n')
+                .write();
+              return;
+            }
+
+            let files = [];
+            try {
+              files = fs.readdirSync('/tmp/plan-results')
+                .filter(f => f.endsWith('.json'))
+                .sort()
+                .map(f => path.join('/tmp/plan-results', f));
+            } catch {}
+
+            if (files.length === 0) {
+              await core.summary.addRaw('No results found.\n').write();
+              return;
+            }
+
+            const rows = files.map(f => {
+              const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+              if (r.status === 'success') {
+                return [r.workspace, '✅', r.to_add, r.to_change, r.to_destroy];
+              }
+              const msg = r.failure_reason
+                ? `❌ Failed: ${r.failure_reason}`
+                : '❌ Failed';
+              return [r.workspace, msg, '', '', ''];
+            });
+
+            await core.summary.addTable([
+              [
+                { data: 'Workspace', header: true },
+                { data: 'Status',    header: true },
+                { data: '+Add',      header: true },
+                { data: '~Change',   header: true },
+                { data: '-Destroy',  header: true },
+              ],
+              ...rows,
+            ]).write();
