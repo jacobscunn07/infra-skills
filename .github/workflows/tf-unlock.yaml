@@ -18,12 +18,12 @@ on:
         required: true
         type: choice
         options:
-          - data / dev
-          - data / staging
-          - data / prod
-          - network-spoke / dev
-          - network-spoke / staging
-          - network-spoke / prod
+          - tf-data / dev
+          - tf-data / staging
+          - tf-data / prod
+          - tf-network-spoke / dev
+          - tf-network-spoke / staging
+          - tf-network-spoke / prod
       lock_id:
         description: Lock ID to release (from the Terraform error message)
         required: true

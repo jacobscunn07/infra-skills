@@ -43,8 +43,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      deploy_network_spoke: ${{ steps.gate.outputs.deploy_network_spoke }}
-      deploy_data:          ${{ steps.gate.outputs.deploy_data }}
+      deploy_tf_network_spoke: ${{ steps.gate.outputs.deploy_tf_network_spoke }}
+      deploy_tf_data:          ${{ steps.gate.outputs.deploy_tf_data }}
 
     steps:
       - name: Checkout
@@ -69,8 +69,8 @@ jobs:
             // as "everything changed" so all projects are deployed.
             if (!baseSha || baseSha === NULL_SHA) {
               core.info('First push to branch — deploying all projects.');
-              core.setOutput('deploy_network_spoke', 'true');
-              core.setOutput('deploy_data',          'true');
+              core.setOutput('deploy_tf_network_spoke', 'true');
+              core.setOutput('deploy_tf_data',          'true');
               return;
             }
 
@@ -129,44 +129,44 @@ jobs:
               return proceed;
             }
 
-            core.setOutput('deploy_network_spoke', String(shouldDeploy('network-spoke')));
-            core.setOutput('deploy_data',          String(shouldDeploy('data')));
+            core.setOutput('deploy_tf_network_spoke', String(shouldDeploy('tf-network-spoke')));
+            core.setOutput('deploy_tf_data',          String(shouldDeploy('tf-data')));
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # network-spoke has no project-dependencies so it runs as soon as setup
+  # tf-network-spoke has no project-dependencies so it runs as soon as setup
   # completes.  Skipped entirely when its deploy flag is false.
   # ─────────────────────────────────────────────────────────────────────────────
-  deploy-network-spoke:
-    name: Deploy network-spoke
+  deploy-tf-network-spoke:
+    name: Deploy tf-network-spoke
     needs: [setup]
-    if: needs.setup.outputs.deploy_network_spoke == 'true'
+    if: needs.setup.outputs.deploy_tf_network_spoke == 'true'
     uses: ./.github/workflows/_tf-project-release.yaml
     with:
-      project: network-spoke
+      project: tf-network-spoke
     secrets: inherit
     permissions:
       id-token: write
       contents: read
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # data depends on network-spoke (declared in data/ci.yaml).  This job waits
-  # for deploy-network-spoke to finish before starting.
+  # tf-data depends on tf-network-spoke (declared in tf-data/ci.yaml).  This job
+  # waits for deploy-tf-network-spoke to finish before starting.
   #
   # always() is required so GitHub does not auto-skip this job when
-  # deploy-network-spoke is skipped (i.e. when only data/ files changed).
+  # deploy-tf-network-spoke is skipped (i.e. when only tf-data/ files changed).
   # != 'failure' permits both the success and skipped results while still
-  # blocking data from deploying if network-spoke errored.
+  # blocking tf-data from deploying if tf-network-spoke errored.
   # ─────────────────────────────────────────────────────────────────────────────
-  deploy-data:
-    name: Deploy data
-    needs: [setup, deploy-network-spoke]
+  deploy-tf-data:
+    name: Deploy tf-data
+    needs: [setup, deploy-tf-network-spoke]
     if: |
       always() &&
-      needs.setup.outputs.deploy_data == 'true' &&
-      needs.deploy-network-spoke.result != 'failure'
+      needs.setup.outputs.deploy_tf_data == 'true' &&
+      needs.deploy-tf-network-spoke.result != 'failure'
     uses: ./.github/workflows/_tf-project-release.yaml
     with:
-      project: data
+      project: tf-data
     secrets: inherit
     permissions:
       id-token: write

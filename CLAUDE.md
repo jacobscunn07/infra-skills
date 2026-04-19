@@ -156,7 +156,7 @@ Shared memory lives in `.claude/memory/`. Use it to record decisions and context
 │   ├── reference/             # Reference documents
 │   └── runbooks/              # SRE operational runbooks
 ├── modules/                   # Reusable local Terraform modules
-└── <component>/               # e.g. network-spoke/, data/
+└── tf-<component>/            # e.g. tf-network-spoke/, tf-data/
     ├── main.tf                # Module calls — no env-specific values
     ├── variables.tf           # Variable declarations
     ├── outputs.tf

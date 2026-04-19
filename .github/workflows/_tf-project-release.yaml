@@ -12,7 +12,7 @@ on:
     inputs:
       project:
         description: >
-          Terraform project directory name (e.g. "network-spoke", "data").
+          Terraform project directory name (e.g. "tf-network-spoke", "tf-data").
           Must contain a backend.tf and at least one environments/ subdirectory.
         type: string
         required: true
