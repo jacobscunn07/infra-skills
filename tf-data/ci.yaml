@@ -1,4 +1,5 @@
 enabled: true
+aws-credentials: false
 
 workspaces:
   dev:
