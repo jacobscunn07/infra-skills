@@ -15,6 +15,13 @@ on:
         description: JSON array of workspace names to plan (e.g. '["dev","prod"]').
         type: string
         required: true
+      aws_credentials:
+        description: >
+          JSON object mapping each workspace name to a boolean — whether to run
+          the AWS credentials step for that workspace (e.g. '{"dev":true,"prod":false}').
+        type: string
+        required: false
+        default: '{}'
 
 # Least-privilege defaults — jobs elevate only what they need.
 permissions:
@@ -88,6 +95,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Configure AWS credentials (OIDC)
+        if: fromJSON(inputs.aws_credentials)[matrix.workspace]
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}

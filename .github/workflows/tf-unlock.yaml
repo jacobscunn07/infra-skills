@@ -56,7 +56,24 @@ jobs:
             core.setOutput('project', project);
             core.setOutput('workspace', workspace);
 
+      - name: Check aws-credentials configuration
+        id: aws-config
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          project: ${{ steps.target.outputs.project }}
+          workspace: ${{ steps.target.outputs.workspace }}
+
+      - name: Extract aws-credentials flag
+        id: aws-creds
+        env:
+          MATRIX:    ${{ steps.aws-config.outputs.matrix }}
+          WORKSPACE: ${{ steps.target.outputs.workspace }}
+        run: |
+          ENABLED=$(echo "$MATRIX" | jq -r ".include[0].aws_credentials.\"$WORKSPACE\"")
+          echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS credentials (OIDC)
+        if: steps.aws-creds.outputs.enabled == 'true'
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}

@@ -58,9 +58,10 @@ inputs:
 outputs:
   matrix:
     description: >
-      JSON matrix of { project, workspaces[] } entries — one per changed (or
-      filtered) project with its eligible workspaces as an array.  Workspaces
-      are filtered by ci.yaml enabled flags and the release_only setting.
+      JSON matrix of { project, workspaces[], aws_credentials } entries — one per
+      changed (or filtered) project.  aws_credentials is a JSON object mapping
+      each workspace name to a boolean (whether to run the AWS credentials step).
+      Workspaces are filtered by ci.yaml enabled flags and the release_only setting.
     value: ${{ steps.build.outputs.matrix }}
   has_changes:
     description: >
@@ -155,6 +156,7 @@ runs:
             const lines = fs.readFileSync(ciConfigPath, 'utf8').split('\n');
             const workspaces = {};
             let projectEnabled = true;
+            let awsCredentials = true;
             let insideWorkspacesBlock = false;
             let currentWorkspace = null;
 
@@ -169,6 +171,11 @@ runs:
                 if (topEnabledMatch) {
                   projectEnabled = topEnabledMatch[1] === 'true';
                 }
+                // Top-level aws-credentials flag
+                const awsCredsMatch = line.match(/^aws-credentials\s*:\s*(true|false)/);
+                if (awsCredsMatch) {
+                  awsCredentials = awsCredsMatch[1] === 'true';
+                }
                 insideWorkspacesBlock = /^workspaces\s*:/.test(line);
                 currentWorkspace = null;
                 continue;
@@ -180,7 +187,7 @@ runs:
               const wsMatch = line.match(/^  (\w[\w-]*)\s*:/);
               if (wsMatch && !/^\s{4}/.test(line)) {
                 currentWorkspace = wsMatch[1];
-                workspaces[currentWorkspace] = { enabled: true, continuousDeploy: true };
+                workspaces[currentWorkspace] = { enabled: true, continuousDeploy: true, awsCredentials: null };
                 continue;
               }
 
@@ -194,10 +201,14 @@ runs:
                 if (cdMatch) {
                   workspaces[currentWorkspace].continuousDeploy = cdMatch[1] === 'true';
                 }
+                const wsAwsCredsMatch = line.match(/^\s+aws-credentials\s*:\s*(true|false)/);
+                if (wsAwsCredsMatch) {
+                  workspaces[currentWorkspace].awsCredentials = wsAwsCredsMatch[1] === 'true';
+                }
               }
             }
 
-            return { enabled: projectEnabled, workspaces };
+            return { enabled: projectEnabled, awsCredentials, workspaces };
           }
 
           /** Discover all Terraform project directories at depth-1 in the repo root. */
@@ -315,7 +326,11 @@ runs:
 
             for (const workspace of eligibleWorkspaces) {
               core.info(`  Workspace: ${workspace}`);
-              matrixEntries.push({ project: projectDir, workspace });
+              const wsOverride = ciConfig?.workspaces?.[workspace]?.awsCredentials;
+              const awsCredentials = (wsOverride !== null && wsOverride !== undefined)
+                ? wsOverride
+                : (ciConfig?.awsCredentials ?? true);
+              matrixEntries.push({ project: projectDir, workspace, awsCredentials });
             }
           }
 
@@ -328,12 +343,21 @@ runs:
           // ── Emit outputs ──────────────────────────────────────────────────
 
           const projectWorkspacesMap = {};
-          for (const { project, workspace } of matrixEntries) {
-            if (!projectWorkspacesMap[project]) projectWorkspacesMap[project] = [];
+          const projectCredsMap = {};
+          for (const { project, workspace, awsCredentials } of matrixEntries) {
+            if (!projectWorkspacesMap[project]) {
+              projectWorkspacesMap[project] = [];
+              projectCredsMap[project] = {};
+            }
             projectWorkspacesMap[project].push(workspace);
+            projectCredsMap[project][workspace] = awsCredentials;
           }
           const matrix = JSON.stringify({
-            include: Object.entries(projectWorkspacesMap).map(([project, workspaces]) => ({ project, workspaces })),
+            include: Object.entries(projectWorkspacesMap).map(([project, workspaces]) => ({
+              project,
+              workspaces,
+              aws_credentials: projectCredsMap[project],
+            })),
           });
           core.info(`Matrix: ${matrix}`);
           core.setOutput('matrix', matrix);

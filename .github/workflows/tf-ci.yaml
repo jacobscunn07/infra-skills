@@ -76,4 +76,5 @@ jobs:
     with:
       project: ${{ matrix.project }}
       workspaces: ${{ toJSON(matrix.workspaces) }}
+      aws_credentials: ${{ toJSON(matrix.aws_credentials) }}
     secrets: inherit

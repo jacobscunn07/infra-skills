@@ -35,6 +35,7 @@ jobs:
       contents: read
     outputs:
       workspaces: ${{ steps.extract-workspaces.outputs.workspaces }}
+      aws_credentials: ${{ steps.extract-workspaces.outputs.aws_credentials }}
       has_workspaces: ${{ steps.workspace-matrix.outputs.has_changes }}
 
     steps:
@@ -57,7 +58,9 @@ jobs:
           MATRIX: ${{ steps.workspace-matrix.outputs.matrix }}
         run: |
           WORKSPACES=$(echo "$MATRIX" | jq -c '.include[0].workspaces')
+          AWS_CREDS=$(echo "$MATRIX" | jq -c '.include[0].aws_credentials')
           echo "workspaces=$WORKSPACES" >> "$GITHUB_OUTPUT"
+          echo "aws_credentials=$AWS_CREDS" >> "$GITHUB_OUTPUT"
 
   # ───────────────────────────────────────────────────────────────────────────
   # One plan job per continuous-deploy workspace.  Plans are read-only so
@@ -84,6 +87,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Configure AWS credentials (OIDC)
+        if: fromJSON(needs.setup.outputs.aws_credentials)[matrix.workspace]
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -137,6 +141,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Configure AWS credentials (OIDC)
+        if: fromJSON(needs.setup.outputs.aws_credentials)[matrix.workspace]
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
