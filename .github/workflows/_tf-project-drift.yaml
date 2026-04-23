@@ -1,8 +1,8 @@
 name: Terraform Project Drift Detection
 
-# Reusable workflow — called once per project by tf-drift.yaml.
-# Runs drift detection for each workspace in the project and uploads a
-# metadata artifact for any workspace where drift is found.
+# Reusable workflow — called once per workspace by tf-drift.yaml.
+# Runs drift detection for a single workspace and uploads a metadata artifact
+# when drift is found.
 on:
   workflow_call:
     inputs:
@@ -10,17 +10,15 @@ on:
         description: Terraform project directory to check for drift.
         type: string
         required: true
-      workspaces:
-        description: JSON array of workspace names to check (e.g. '["dev","prod"]').
+      workspace:
+        description: Workspace name to check for drift.
         type: string
         required: true
       aws_credentials:
-        description: >
-          JSON object mapping each workspace name to a boolean — whether to run
-          the AWS credentials step for that workspace (e.g. '{"dev":true,"prod":false}').
-        type: string
+        description: Whether to configure AWS credentials (OIDC) for this workspace.
+        type: boolean
         required: false
-        default: '{}'
+        default: false
 
 # Least-privilege defaults — jobs elevate only what they need.
 permissions:
@@ -28,34 +26,29 @@ permissions:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # One job per workspace.  Uses dflook/terraform-check — purpose-built for
-  # drift detection.  It fails the step when changes are present and sets
+  # Single workspace drift check.  Uses dflook/terraform-check — purpose-built
+  # for drift detection.  It fails the step when changes are present and sets
   # failure-reason: changes-to-apply.  continue-on-error: true lets the job
-  # survive drift so all workspaces are checked regardless of whether any one
-  # has changes.  A separate step re-fails the job for genuine Terraform errors.
+  # survive drift so the outer workflow can report all affected workspaces.
+  # A separate step re-fails the job for genuine Terraform errors.
   #
   # Drift metadata artifacts (name: drift__<project>__<workspace>) are uploaded
   # when drift is found so the outer tf-drift.yaml report job can aggregate them.
   # ─────────────────────────────────────────────────────────────────────────────
   detect-drift:
-    name: "${{ matrix.workspace }}"
+    name: "${{ inputs.workspace }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
 
-    strategy:
-      fail-fast: false
-      matrix:
-        workspace: ${{ fromJSON(inputs.workspaces) }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Configure AWS credentials (OIDC)
-        if: fromJSON(inputs.aws_credentials)[matrix.workspace]
+        if: inputs.aws_credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -70,15 +63,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: ${{ inputs.project }}
-          workspace: ${{ matrix.workspace }}
-          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+          workspace: ${{ inputs.workspace }}
+          var_file: environments/${{ inputs.workspace }}/terraform.tfvars
 
       - name: Fail on Terraform error
         if: steps.check.outcome == 'failure' && steps.check.outputs.failure-reason != 'changes-to-apply'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
         env:
           PROJECT: ${{ inputs.project }}
-          WORKSPACE: ${{ matrix.workspace }}
+          WORKSPACE: ${{ inputs.workspace }}
         with:
           script: |
             core.setFailed(`Terraform check failed for ${process.env.PROJECT}/${process.env.WORKSPACE}`);
@@ -88,7 +81,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
         env:
           PROJECT: ${{ inputs.project }}
-          WORKSPACE: ${{ matrix.workspace }}
+          WORKSPACE: ${{ inputs.workspace }}
         with:
           script: |
             const fs = require('fs');
@@ -105,6 +98,6 @@ jobs:
         with:
           # Double-underscore separates project from workspace so names with
           # hyphens (e.g. network-spoke) are unambiguous when parsing.
-          name: drift__${{ inputs.project }}__${{ matrix.workspace }}
+          name: drift__${{ inputs.project }}__${{ inputs.workspace }}
           path: ${{ runner.temp }}/drift-meta.json
           retention-days: 30

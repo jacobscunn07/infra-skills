@@ -31,6 +31,8 @@ jobs:
       - name: Build dynamic matrix
         id: build-matrix
         uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          flat: "true"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # One call to the reusable workflow per project.  Each call fans out
@@ -39,7 +41,7 @@ jobs:
   # job below aggregates those artifacts regardless of how many projects ran.
   # ─────────────────────────────────────────────────────────────────────────────
   drift:
-    name: "${{ matrix.project }}"
+    name: "${{ matrix.project }} / ${{ matrix.workspace }}"
     needs: setup
     permissions:
       id-token: write  # Required for OIDC → AWS
@@ -52,8 +54,8 @@ jobs:
     uses: ./.github/workflows/_tf-project-drift.yaml
     with:
       project: ${{ matrix.project }}
-      workspaces: ${{ toJSON(matrix.workspaces) }}
-      aws_credentials: ${{ toJSON(matrix.aws_credentials) }}
+      workspace: ${{ matrix.workspace }}
+      aws_credentials: ${{ matrix.aws_credentials }}
     secrets: inherit
 
   # ─────────────────────────────────────────────────────────────────────────────

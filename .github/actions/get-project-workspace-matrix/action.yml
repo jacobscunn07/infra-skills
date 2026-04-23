@@ -54,13 +54,23 @@ inputs:
       enabled: false are also always excluded.
     required: false
     default: "false"
+  flat:
+    description: >
+      When "true", emit one matrix entry per workspace with the shape
+      { project, workspace, aws_credentials } where aws_credentials is a boolean.
+      Used by workflows with no project-level jobs (e.g. drift, unlock) to avoid
+      a JSON map lookup per workspace.
+      When "false" (default), emit one entry per project with the shape
+      { project, workspaces[], aws_credentials{} }.
+    required: false
+    default: "false"
 
 outputs:
   matrix:
     description: >
-      JSON matrix of { project, workspaces[], aws_credentials } entries — one per
-      changed (or filtered) project.  aws_credentials is a JSON object mapping
-      each workspace name to a boolean (whether to run the AWS credentials step).
+      JSON matrix entries.  Shape depends on the flat input.
+      flat=false (default): { project, workspaces[], aws_credentials{} } — one entry per project.
+      flat=true: { project, workspace, aws_credentials } — one entry per workspace, aws_credentials is a boolean.
       Workspaces are filtered by ci.yaml enabled flags and the release_only setting.
     value: ${{ steps.build.outputs.matrix }}
   has_changes:
@@ -82,6 +92,7 @@ runs:
         FILTER_PROJECT:   ${{ inputs.project }}
         FILTER_WORKSPACE: ${{ inputs.workspace }}
         RELEASE_ONLY:     ${{ inputs.release_only }}
+        FLAT:             ${{ inputs.flat }}
       with:
         script: |
           const fs   = require('fs');
@@ -94,6 +105,7 @@ runs:
             filterProject:   (process.env.FILTER_PROJECT    || '').trim(),
             filterWorkspace: (process.env.FILTER_WORKSPACE  || '').trim(),
             releaseOnly:     process.env.RELEASE_ONLY === 'true',
+            flat:            process.env.FLAT === 'true',
           };
 
           // ── Helpers ───────────────────────────────────────────────────────
@@ -129,83 +141,40 @@ runs:
           }
 
           /**
-           * Parse `<projectDir>/ci.yaml` and return:
-           *   { enabled: boolean, workspaces: { [name]: { enabled, continuousDeploy } } }
+           * Parse `<projectDir>/ci.yaml` via `yq` and return:
+           *   { enabled: boolean, awsCredentials: boolean, workspaces: { [name]: { enabled, continuousDeploy, awsCredentials } } }
            * Returns null when the file is absent.
            *
-           * Top-level `enabled` (default true) gates the entire project — when false
-           * the project is skipped by every workflow regardless of workspace settings.
-           * Workspace-level `enabled` and `continuous-deploy` default to true when omitted.
-           *
-           * Expected format (no external YAML library — hand-rolled parser):
-           *
-           *   enabled: true
-           *
-           *   workspaces:
-           *     dev:
-           *       enabled: true
-           *       continuous-deploy: true
-           *     prod:
-           *       enabled: true
-           *       continuous-deploy: false
+           * Top-level `enabled` (default true) gates the entire project.
+           * Top-level `aws-credentials` (default true) is the project-wide default.
+           * Workspace-level keys default to true when omitted; `aws-credentials` defaults
+           * to null (absent) so the project-level default is used instead of false.
            */
-          function readCiConfig(projectDir) {
+          async function readCiConfig(projectDir) {
             const ciConfigPath = path.join(projectDir, 'ci.yaml');
             if (!fs.existsSync(ciConfigPath)) return null;
 
-            const lines = fs.readFileSync(ciConfigPath, 'utf8').split('\n');
+            const { stdout } = await exec.getExecOutput(
+              'yq', ['-o=json', '.', ciConfigPath],
+              { silent: true },
+            );
+            const raw = JSON.parse(stdout);
+
+            const projectEnabled = raw.enabled            ?? true;
+            const awsCredentials = raw['aws-credentials'] ?? true;
+
             const workspaces = {};
-            let projectEnabled = true;
-            let awsCredentials = true;
-            let insideWorkspacesBlock = false;
-            let currentWorkspace = null;
-
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed || trimmed.startsWith('#')) continue;
-
-              // Top-level key (no leading whitespace)
-              if (/^\S/.test(line)) {
-                // Top-level enabled flag
-                const topEnabledMatch = line.match(/^enabled\s*:\s*(true|false)/);
-                if (topEnabledMatch) {
-                  projectEnabled = topEnabledMatch[1] === 'true';
-                }
-                // Top-level aws-credentials flag
-                const awsCredsMatch = line.match(/^aws-credentials\s*:\s*(true|false)/);
-                if (awsCredsMatch) {
-                  awsCredentials = awsCredsMatch[1] === 'true';
-                }
-                insideWorkspacesBlock = /^workspaces\s*:/.test(line);
-                currentWorkspace = null;
-                continue;
-              }
-
-              if (!insideWorkspacesBlock) continue;
-
-              // Workspace name: exactly 2-space indent followed by a key
-              const wsMatch = line.match(/^  (\w[\w-]*)\s*:/);
-              if (wsMatch && !/^\s{4}/.test(line)) {
-                currentWorkspace = wsMatch[1];
-                workspaces[currentWorkspace] = { enabled: true, continuousDeploy: true, awsCredentials: null };
-                continue;
-              }
-
-              // Workspace properties: deeper indent
-              if (currentWorkspace) {
-                const enabledMatch = line.match(/^\s+enabled\s*:\s*(true|false)/);
-                if (enabledMatch) {
-                  workspaces[currentWorkspace].enabled = enabledMatch[1] === 'true';
-                }
-                const cdMatch = line.match(/^\s+continuous-deploy\s*:\s*(true|false)/);
-                if (cdMatch) {
-                  workspaces[currentWorkspace].continuousDeploy = cdMatch[1] === 'true';
-                }
-                const wsAwsCredsMatch = line.match(/^\s+aws-credentials\s*:\s*(true|false)/);
-                if (wsAwsCredsMatch) {
-                  workspaces[currentWorkspace].awsCredentials = wsAwsCredsMatch[1] === 'true';
-                }
-              }
+            for (const [name, ws] of Object.entries(raw.workspaces ?? {})) {
+              // Use hasOwnProperty to distinguish an absent key (null sentinel →
+              // fall back to project default) from an explicit false.
+              const wsAwsCreds = Object.prototype.hasOwnProperty.call(ws, 'aws-credentials')
+                ? ws['aws-credentials']
+                : null;
+              workspaces[name] = {
+                enabled:          ws.enabled              ?? true,
+                continuousDeploy: ws['continuous-deploy'] ?? true,
+                awsCredentials:   wsAwsCreds,
+              };
             }
 
             return { enabled: projectEnabled, awsCredentials, workspaces };
@@ -287,7 +256,7 @@ runs:
             let eligibleWorkspaces = allWorkspaces
               .filter(ws => !inputs.filterWorkspace || ws === inputs.filterWorkspace);
 
-            const ciConfig = readCiConfig(projectDir);
+            const ciConfig = await readCiConfig(projectDir);
 
             // Top-level enabled: false disables the entire project across all workflows.
             if (ciConfig !== null && !ciConfig.enabled) {
@@ -342,24 +311,37 @@ runs:
 
           // ── Emit outputs ──────────────────────────────────────────────────
 
-          const projectWorkspacesMap = {};
-          const projectCredsMap = {};
-          for (const { project, workspace, awsCredentials } of matrixEntries) {
-            if (!projectWorkspacesMap[project]) {
-              projectWorkspacesMap[project] = [];
-              projectCredsMap[project] = {};
+          let matrix;
+          if (inputs.flat) {
+            // Flat mode: one entry per workspace — aws_credentials is a boolean.
+            matrix = JSON.stringify({
+              include: matrixEntries.map(({ project, workspace, awsCredentials }) => ({
+                project,
+                workspace,
+                aws_credentials: awsCredentials,
+              })),
+            });
+          } else {
+            // Grouped mode (default): one entry per project — aws_credentials is a map.
+            const projectWorkspacesMap = {};
+            const projectCredsMap = {};
+            for (const { project, workspace, awsCredentials } of matrixEntries) {
+              if (!projectWorkspacesMap[project]) {
+                projectWorkspacesMap[project] = [];
+                projectCredsMap[project] = {};
+              }
+              projectWorkspacesMap[project].push(workspace);
+              projectCredsMap[project][workspace] = awsCredentials;
             }
-            projectWorkspacesMap[project].push(workspace);
-            projectCredsMap[project][workspace] = awsCredentials;
+            matrix = JSON.stringify({
+              include: Object.entries(projectWorkspacesMap).map(([project, workspaces]) => ({
+                project,
+                workspaces,
+                aws_credentials: projectCredsMap[project],
+              })),
+            });
           }
-          const matrix = JSON.stringify({
-            include: Object.entries(projectWorkspacesMap).map(([project, workspaces]) => ({
-              project,
-              workspaces,
-              aws_credentials: projectCredsMap[project],
-            })),
-          });
+
           core.info(`Matrix: ${matrix}`);
           core.setOutput('matrix', matrix);
-
           core.setOutput('has_changes', String(matrixEntries.length > 0));
