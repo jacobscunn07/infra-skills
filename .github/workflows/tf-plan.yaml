@@ -42,7 +42,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      matrix: ${{ steps.group.outputs.matrix }}
       has_entries: ${{ steps.build-matrix.outputs.has_changes }}
 
     steps:
@@ -67,6 +67,26 @@ jobs:
         with:
           project: ${{ steps.target.outputs.project }}
           workspace: ${{ steps.target.outputs.workspace }}
+
+      # Group per-workspace entries by project so the plan job can fan out
+      # workspaces for a project in one reusable workflow call.
+      - name: Group workspaces by project
+        id: group
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          FLAT_MATRIX: ${{ steps.build-matrix.outputs.matrix }}
+        with:
+          script: |
+            const flat = JSON.parse(process.env.FLAT_MATRIX || '{"include":[]}');
+            const projectMap = {};
+            for (const { project, workspace, aws_credentials } of flat.include) {
+              if (!projectMap[project]) {
+                projectMap[project] = { project, workspaces: [], aws_credentials: {} };
+              }
+              projectMap[project].workspaces.push(workspace);
+              projectMap[project].aws_credentials[workspace] = aws_credentials;
+            }
+            core.setOutput('matrix', JSON.stringify({ include: Object.values(projectMap) }));
 
   # ─────────────────────────────────────────────────────────────────────────────
   # One call to the reusable workflow per project entry produced by setup.

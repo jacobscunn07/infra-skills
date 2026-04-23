@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      matrix: ${{ steps.group.outputs.matrix }}
       has_changes: ${{ steps.build-matrix.outputs.has_changes }}
 
     steps:
@@ -48,6 +48,26 @@ jobs:
         uses: ./.github/actions/get-project-workspace-matrix
         with:
           base_ref: ${{ github.base_ref }}
+
+      # Group per-workspace entries by project so the ci job can run fmt,
+      # validate, and plan for all workspaces of a project in one call.
+      - name: Group workspaces by project
+        id: group
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          FLAT_MATRIX: ${{ steps.build-matrix.outputs.matrix }}
+        with:
+          script: |
+            const flat = JSON.parse(process.env.FLAT_MATRIX || '{"include":[]}');
+            const projectMap = {};
+            for (const { project, workspace, aws_credentials } of flat.include) {
+              if (!projectMap[project]) {
+                projectMap[project] = { project, workspaces: [], aws_credentials: {} };
+              }
+              projectMap[project].workspaces.push(workspace);
+              projectMap[project].aws_credentials[workspace] = aws_credentials;
+            }
+            core.setOutput('matrix', JSON.stringify({ include: Object.values(projectMap) }));
 
   # ─────────────────────────────────────────────────────────────────────────────
   # One call to the reusable workflow per changed project.  Each call runs fmt,

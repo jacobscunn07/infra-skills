@@ -1,6 +1,7 @@
 name: Get Project Workspace Matrix
 description: >
-  Discovers Terraform projects and workspaces and emits a GitHub Actions matrix.
+  Discovers Terraform projects and workspaces and emits a GitHub Actions matrix
+  with one entry per workspace: { project, workspace, aws_credentials }.
   Projects are identified by a backend.tf at depth 1 in the repo root; workspaces
   are derived from each project's environments/ subdirectories.
 
@@ -54,23 +55,12 @@ inputs:
       enabled: false are also always excluded.
     required: false
     default: "false"
-  flat:
-    description: >
-      When "true", emit one matrix entry per workspace with the shape
-      { project, workspace, aws_credentials } where aws_credentials is a boolean.
-      Used by workflows with no project-level jobs (e.g. drift, unlock) to avoid
-      a JSON map lookup per workspace.
-      When "false" (default), emit one entry per project with the shape
-      { project, workspaces[], aws_credentials{} }.
-    required: false
-    default: "false"
 
 outputs:
   matrix:
     description: >
-      JSON matrix entries.  Shape depends on the flat input.
-      flat=false (default): { project, workspaces[], aws_credentials{} } — one entry per project.
-      flat=true: { project, workspace, aws_credentials } — one entry per workspace, aws_credentials is a boolean.
+      JSON matrix entries.  Always one entry per workspace with the shape
+      { project, workspace, aws_credentials } where aws_credentials is a boolean.
       Workspaces are filtered by ci.yaml enabled flags and the release_only setting.
     value: ${{ steps.build.outputs.matrix }}
   has_changes:
@@ -92,7 +82,6 @@ runs:
         FILTER_PROJECT:   ${{ inputs.project }}
         FILTER_WORKSPACE: ${{ inputs.workspace }}
         RELEASE_ONLY:     ${{ inputs.release_only }}
-        FLAT:             ${{ inputs.flat }}
       with:
         script: |
           const fs   = require('fs');
@@ -105,7 +94,6 @@ runs:
             filterProject:   (process.env.FILTER_PROJECT    || '').trim(),
             filterWorkspace: (process.env.FILTER_WORKSPACE  || '').trim(),
             releaseOnly:     process.env.RELEASE_ONLY === 'true',
-            flat:            process.env.FLAT === 'true',
           };
 
           // ── Helpers ───────────────────────────────────────────────────────
@@ -311,36 +299,14 @@ runs:
 
           // ── Emit outputs ──────────────────────────────────────────────────
 
-          let matrix;
-          if (inputs.flat) {
-            // Flat mode: one entry per workspace — aws_credentials is a boolean.
-            matrix = JSON.stringify({
-              include: matrixEntries.map(({ project, workspace, awsCredentials }) => ({
-                project,
-                workspace,
-                aws_credentials: awsCredentials,
-              })),
-            });
-          } else {
-            // Grouped mode (default): one entry per project — aws_credentials is a map.
-            const projectWorkspacesMap = {};
-            const projectCredsMap = {};
-            for (const { project, workspace, awsCredentials } of matrixEntries) {
-              if (!projectWorkspacesMap[project]) {
-                projectWorkspacesMap[project] = [];
-                projectCredsMap[project] = {};
-              }
-              projectWorkspacesMap[project].push(workspace);
-              projectCredsMap[project][workspace] = awsCredentials;
-            }
-            matrix = JSON.stringify({
-              include: Object.entries(projectWorkspacesMap).map(([project, workspaces]) => ({
-                project,
-                workspaces,
-                aws_credentials: projectCredsMap[project],
-              })),
-            });
-          }
+          // Always emit one entry per workspace — aws_credentials is a boolean.
+          const matrix = JSON.stringify({
+            include: matrixEntries.map(({ project, workspace, awsCredentials }) => ({
+              project,
+              workspace,
+              aws_credentials: awsCredentials,
+            })),
+          });
 
           core.info(`Matrix: ${matrix}`);
           core.setOutput('matrix', matrix);

@@ -62,7 +62,6 @@ jobs:
         with:
           project: ${{ steps.target.outputs.project }}
           workspace: ${{ steps.target.outputs.workspace }}
-          flat: "true"
 
       - name: Configure AWS credentials (OIDC)
         if: fromJSON(steps.aws-config.outputs.matrix).include[0].aws_credentials
