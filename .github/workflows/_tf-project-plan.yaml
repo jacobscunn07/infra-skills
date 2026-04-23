@@ -40,6 +40,7 @@ jobs:
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
+      actions: read    # Required to resolve per-job URLs for the summary table
 
     strategy:
       fail-fast: false
@@ -59,6 +60,7 @@ jobs:
           mask-aws-account-id: 'true'
 
       - name: Terraform Plan
+        id: plan
         uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,3 +70,144 @@ jobs:
           var_file: environments/${{ matrix.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ matrix.workspace }}"
           args: -lock=false
+
+      - name: Save plan result
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          PROJECT:        ${{ inputs.project }}
+          WORKSPACE:      ${{ matrix.workspace }}
+          PLAN_STATUS:    ${{ steps.plan.outcome }}
+          TO_ADD:         ${{ steps.plan.outputs.to_add }}
+          TO_CHANGE:      ${{ steps.plan.outputs.to_change }}
+          TO_DESTROY:     ${{ steps.plan.outputs.to_destroy }}
+          FAILURE_REASON: ${{ steps.plan.outputs.failure-reason }}
+        with:
+          script: |
+            const fs      = require('fs');
+            const project = process.env.PROJECT;
+            const ws      = process.env.WORKSPACE;
+
+            const resp = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const job = resp.data.jobs.find(
+              j => j.name === `${project} / ${ws}` || j.name === ws,
+            );
+
+            const result = {
+              workspace:      ws,
+              status:         process.env.PLAN_STATUS,
+              to_add:         process.env.TO_ADD          || '0',
+              to_change:      process.env.TO_CHANGE       || '0',
+              to_destroy:     process.env.TO_DESTROY      || '0',
+              failure_reason: process.env.FAILURE_REASON  || '',
+              job_url:        job?.html_url               ?? '',
+              check_run_id:   job?.check_run_url ? Number(job.check_run_url.split('/').pop()) : null,
+            };
+            fs.mkdirSync('/tmp/plan-results', { recursive: true });
+            fs.writeFileSync(
+              `/tmp/plan-results/${result.workspace}.json`,
+              JSON.stringify(result),
+            );
+
+      - name: Upload plan result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: plan-result-${{ inputs.project }}-${{ matrix.workspace }}
+          path: /tmp/plan-results/${{ matrix.workspace }}.json
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Collects per-workspace plan results and writes a single summary table.
+  # Runs even when plan fails.
+  # ─────────────────────────────────────────────────────────────────────────────
+  summarize:
+    name: Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [plan]
+    if: always()
+    permissions:
+      contents: read
+      checks: read
+
+    steps:
+      - name: Download plan results
+        continue-on-error: true  # Pattern may match nothing when plan was skipped
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: plan-result-${{ inputs.project }}-*
+          path: /tmp/plan-results
+          merge-multiple: true
+
+      - name: Write job summary
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        with:
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            await core.summary.addHeading('${{ inputs.project }}', 2);
+
+            let files = [];
+            try {
+              files = fs.readdirSync('/tmp/plan-results')
+                .filter(f => f.endsWith('.json'))
+                .sort()
+                .map(f => path.join('/tmp/plan-results', f));
+            } catch {}
+
+            if (files.length === 0) {
+              await core.summary.addRaw('No results found.\n').write();
+              return;
+            }
+
+            const rows = await Promise.all(files.map(async f => {
+              const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+              const wsCell = r.job_url
+                ? `<a href="${r.job_url}">${r.workspace}</a>`
+                : r.workspace;
+              if (r.status === 'success') {
+                return [wsCell, '✅', r.to_add, r.to_change, r.to_destroy];
+              }
+
+              let statusMsg = r.failure_reason ? `❌ ${r.failure_reason}` : '❌ Failed';
+
+              if (r.check_run_id) {
+                try {
+                  const { data: annotations } = await github.rest.checks.listAnnotations({
+                    owner:         context.repo.owner,
+                    repo:          context.repo.repo,
+                    check_run_id:  r.check_run_id,
+                  });
+                  const errAnnotation = annotations.find(
+                    a => a.annotation_level === 'failure'
+                  );
+                  if (errAnnotation?.message) {
+                    const truncated = errAnnotation.message.replace(/\n/g, ' ').slice(0, 150);
+                    const ellipsis  = errAnnotation.message.length > 150 ? '…' : '';
+                    statusMsg += ` — ${truncated}${ellipsis}`;
+                  }
+                } catch (_) {
+                  // annotations unavailable — fall back to failure_reason only
+                }
+              }
+
+              return [wsCell, statusMsg, '', '', ''];
+            }));
+
+            await core.summary.addTable([
+              [
+                { data: 'Workspace', header: true },
+                { data: 'Status',    header: true },
+                { data: '+Add',      header: true },
+                { data: '~Change',   header: true },
+                { data: '-Destroy',  header: true },
+              ],
+              ...rows,
+            ]).write();

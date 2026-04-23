@@ -22,7 +22,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      matrix: ${{ steps.group.outputs.matrix }}
+      has_entries: ${{ steps.build-matrix.outputs.has_changes }}
 
     steps:
       - name: Checkout
@@ -32,6 +33,26 @@ jobs:
         id: build-matrix
         uses: ./.github/actions/get-project-workspace-matrix
 
+      # Group per-workspace entries by project so the drift job can fan out
+      # workspaces for a project in one reusable workflow call.
+      - name: Group workspaces by project
+        id: group
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          FLAT_MATRIX: ${{ steps.build-matrix.outputs.matrix }}
+        with:
+          script: |
+            const flat = JSON.parse(process.env.FLAT_MATRIX || '{"include":[]}');
+            const projectMap = {};
+            for (const { project, workspace, aws_credentials } of flat.include) {
+              if (!projectMap[project]) {
+                projectMap[project] = { project, workspaces: [], aws_credentials: {} };
+              }
+              projectMap[project].workspaces.push(workspace);
+              projectMap[project].aws_credentials[workspace] = aws_credentials;
+            }
+            core.setOutput('matrix', JSON.stringify({ include: Object.values(projectMap) }));
+
   # ─────────────────────────────────────────────────────────────────────────────
   # One call to the reusable workflow per project.  Each call fans out
   # drift-detection jobs over the project's workspaces internally and uploads
@@ -39,11 +60,14 @@ jobs:
   # job below aggregates those artifacts regardless of how many projects ran.
   # ─────────────────────────────────────────────────────────────────────────────
   drift:
-    name: "${{ matrix.project }} / ${{ matrix.workspace }}"
+    name: "${{ matrix.project }}"
     needs: setup
+    if: needs.setup.outputs.has_entries == 'true'
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
+      actions: read    # Required for reusable workflow to resolve per-job URLs
+      checks: read     # Required for summarize job to fetch check-run annotations
 
     strategy:
       fail-fast: false
@@ -52,8 +76,8 @@ jobs:
     uses: ./.github/workflows/_tf-project-drift.yaml
     with:
       project: ${{ matrix.project }}
-      workspace: ${{ matrix.workspace }}
-      aws_credentials: ${{ matrix.aws_credentials }}
+      workspaces: ${{ toJSON(matrix.workspaces) }}
+      aws_credentials: ${{ toJSON(matrix.aws_credentials) }}
     secrets: inherit
 
   # ─────────────────────────────────────────────────────────────────────────────

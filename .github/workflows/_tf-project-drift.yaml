@@ -1,8 +1,8 @@
 name: Terraform Project Drift Detection
 
-# Reusable workflow — called once per workspace by tf-drift.yaml.
-# Runs drift detection for a single workspace and uploads a metadata artifact
-# when drift is found.
+# Reusable workflow — called once per project by tf-drift.yaml.
+# Runs drift detection for each workspace in the project.  Intended for
+# scheduled and on-demand use, so no PR comment permissions are requested.
 on:
   workflow_call:
     inputs:
@@ -10,15 +10,17 @@ on:
         description: Terraform project directory to check for drift.
         type: string
         required: true
-      workspace:
-        description: Workspace name to check for drift.
+      workspaces:
+        description: JSON array of workspace names to check (e.g. '["dev","prod"]').
         type: string
         required: true
       aws_credentials:
-        description: Whether to configure AWS credentials (OIDC) for this workspace.
-        type: boolean
+        description: >
+          JSON object mapping each workspace name to a boolean — whether to run
+          the AWS credentials step for that workspace (e.g. '{"dev":true,"prod":false}').
+        type: string
         required: false
-        default: false
+        default: '{}'
 
 # Least-privilege defaults — jobs elevate only what they need.
 permissions:
@@ -26,29 +28,36 @@ permissions:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # Single workspace drift check.  Uses dflook/terraform-check — purpose-built
+  # One drift check per workspace.  Uses dflook/terraform-check — purpose-built
   # for drift detection.  It fails the step when changes are present and sets
   # failure-reason: changes-to-apply.  continue-on-error: true lets the job
   # survive drift so the outer workflow can report all affected workspaces.
   # A separate step re-fails the job for genuine Terraform errors.
   #
-  # Drift metadata artifacts (name: drift__<project>__<workspace>) are uploaded
-  # when drift is found so the outer tf-drift.yaml report job can aggregate them.
+  # Two artifact types are uploaded per drifted workspace:
+  #   drift__<project>__<workspace>  — metadata consumed by tf-drift.yaml report
+  #   drift-result-<project>-<ws>   — full status consumed by the summarize job
   # ─────────────────────────────────────────────────────────────────────────────
   detect-drift:
-    name: "${{ inputs.workspace }}"
+    name: "${{ matrix.workspace }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
+      actions: read    # Required to resolve per-job URLs for the summary table
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJSON(inputs.workspaces) }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Configure AWS credentials (OIDC)
-        if: inputs.aws_credentials
+        if: fromJSON(inputs.aws_credentials)[matrix.workspace]
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -63,15 +72,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: ${{ inputs.project }}
-          workspace: ${{ inputs.workspace }}
-          var_file: environments/${{ inputs.workspace }}/terraform.tfvars
+          workspace: ${{ matrix.workspace }}
+          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
 
       - name: Fail on Terraform error
         if: steps.check.outcome == 'failure' && steps.check.outputs.failure-reason != 'changes-to-apply'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
         env:
           PROJECT: ${{ inputs.project }}
-          WORKSPACE: ${{ inputs.workspace }}
+          WORKSPACE: ${{ matrix.workspace }}
         with:
           script: |
             core.setFailed(`Terraform check failed for ${process.env.PROJECT}/${process.env.WORKSPACE}`);
@@ -81,7 +90,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
         env:
           PROJECT: ${{ inputs.project }}
-          WORKSPACE: ${{ inputs.workspace }}
+          WORKSPACE: ${{ matrix.workspace }}
         with:
           script: |
             const fs = require('fs');
@@ -98,6 +107,141 @@ jobs:
         with:
           # Double-underscore separates project from workspace so names with
           # hyphens (e.g. network-spoke) are unambiguous when parsing.
-          name: drift__${{ inputs.project }}__${{ inputs.workspace }}
+          name: drift__${{ inputs.project }}__${{ matrix.workspace }}
           path: ${{ runner.temp }}/drift-meta.json
           retention-days: 30
+
+      - name: Save drift result
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          PROJECT:        ${{ inputs.project }}
+          WORKSPACE:      ${{ matrix.workspace }}
+          CHECK_OUTCOME:  ${{ steps.check.outcome }}
+          FAILURE_REASON: ${{ steps.check.outputs.failure-reason }}
+        with:
+          script: |
+            const fs      = require('fs');
+            const project = process.env.PROJECT;
+            const ws      = process.env.WORKSPACE;
+
+            const resp = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const job = resp.data.jobs.find(
+              j => j.name === `${project} / ${ws}` || j.name === ws,
+            );
+
+            const result = {
+              workspace:      ws,
+              status:         process.env.CHECK_OUTCOME,
+              failure_reason: process.env.FAILURE_REASON || '',
+              job_url:        job?.html_url               ?? '',
+              check_run_id:   job?.check_run_url ? Number(job.check_run_url.split('/').pop()) : null,
+            };
+            fs.mkdirSync('/tmp/drift-results', { recursive: true });
+            fs.writeFileSync(
+              `/tmp/drift-results/${result.workspace}.json`,
+              JSON.stringify(result),
+            );
+
+      - name: Upload drift result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: drift-result-${{ inputs.project }}-${{ matrix.workspace }}
+          path: /tmp/drift-results/${{ matrix.workspace }}.json
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Collects per-workspace drift results and writes a single summary table.
+  # Runs even when detect-drift fails.
+  # ─────────────────────────────────────────────────────────────────────────────
+  summarize:
+    name: Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [detect-drift]
+    if: always()
+    permissions:
+      contents: read
+      checks: read
+
+    steps:
+      - name: Download drift results
+        continue-on-error: true  # Pattern may match nothing if all workspaces failed before uploading
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: drift-result-${{ inputs.project }}-*
+          path: /tmp/drift-results
+          merge-multiple: true
+
+      - name: Write job summary
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        with:
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            await core.summary.addHeading('${{ inputs.project }}', 2);
+
+            let files = [];
+            try {
+              files = fs.readdirSync('/tmp/drift-results')
+                .filter(f => f.endsWith('.json'))
+                .sort()
+                .map(f => path.join('/tmp/drift-results', f));
+            } catch {}
+
+            if (files.length === 0) {
+              await core.summary.addRaw('No results found.\n').write();
+              return;
+            }
+
+            const rows = await Promise.all(files.map(async f => {
+              const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+              const wsCell = r.job_url
+                ? `<a href="${r.job_url}">${r.workspace}</a>`
+                : r.workspace;
+
+              if (r.status === 'success') {
+                return [wsCell, '✅ No drift'];
+              }
+
+              let statusMsg = r.failure_reason === 'changes-to-apply'
+                ? '❌ Drift detected'
+                : (r.failure_reason ? `❌ ${r.failure_reason}` : '❌ Failed');
+
+              if (r.check_run_id && r.failure_reason !== 'changes-to-apply') {
+                try {
+                  const { data: annotations } = await github.rest.checks.listAnnotations({
+                    owner:         context.repo.owner,
+                    repo:          context.repo.repo,
+                    check_run_id:  r.check_run_id,
+                  });
+                  const errAnnotation = annotations.find(
+                    a => a.annotation_level === 'failure'
+                  );
+                  if (errAnnotation?.message) {
+                    const truncated = errAnnotation.message.replace(/\n/g, ' ').slice(0, 150);
+                    const ellipsis  = errAnnotation.message.length > 150 ? '…' : '';
+                    statusMsg += ` — ${truncated}${ellipsis}`;
+                  }
+                } catch (_) {
+                  // annotations unavailable — fall back to failure_reason only
+                }
+              }
+
+              return [wsCell, statusMsg];
+            }));
+
+            await core.summary.addTable([
+              [
+                { data: 'Workspace', header: true },
+                { data: 'Status',    header: true },
+              ],
+              ...rows,
+            ]).write();
