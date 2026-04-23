@@ -89,3 +89,101 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read  # Passed to the report job inside the reusable workflow
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Collects per-workspace release results and writes a single summary table.
+  # Runs even when release fails or is skipped.
+  # ───────────────────────────────────────────────────────────────────────────
+  summarize:
+    name: Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [release]
+    if: always()
+    permissions:
+      contents: read
+      checks: read
+
+    steps:
+      - name: Download release results
+        continue-on-error: true  # Pattern may match nothing if all workspaces failed before uploading
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: release-result-${{ inputs.project }}-*
+          path: /tmp/release-results
+          merge-multiple: true
+
+      - name: Write job summary
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            await core.summary.addHeading('${{ inputs.project }}', 2);
+
+            if ('${{ needs.release.result }}' === 'skipped') {
+              await core.summary
+                .addRaw('> [!WARNING]\n> Release was skipped — no continuous-deploy workspaces found.\n')
+                .write();
+              return;
+            }
+
+            let files = [];
+            try {
+              files = fs.readdirSync('/tmp/release-results')
+                .filter(f => f.endsWith('.json'))
+                .sort()
+                .map(f => path.join('/tmp/release-results', f));
+            } catch {}
+
+            if (files.length === 0) {
+              await core.summary.addRaw('No results found.\n').write();
+              return;
+            }
+
+            const rows = await Promise.all(files.map(async f => {
+              const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+              const wsCell = r.job_url
+                ? `<a href="${r.job_url}">${r.workspace}</a>`
+                : r.workspace;
+              if (r.status === 'success') {
+                return [wsCell, '✅ Applied', r.to_add, r.to_change, r.to_destroy];
+              }
+
+              let statusMsg = r.failure_reason ? `❌ ${r.failure_reason}` : '❌ Failed';
+
+              if (r.check_run_id) {
+                try {
+                  const { data: annotations } = await github.rest.checks.listAnnotations({
+                    owner:        context.repo.owner,
+                    repo:         context.repo.repo,
+                    check_run_id: r.check_run_id,
+                  });
+                  const errAnnotation = annotations.find(
+                    a => a.annotation_level === 'failure'
+                  );
+                  if (errAnnotation?.message) {
+                    const truncated = errAnnotation.message.replace(/\n/g, ' ').slice(0, 150);
+                    const ellipsis  = errAnnotation.message.length > 150 ? '…' : '';
+                    statusMsg += ` — ${truncated}${ellipsis}`;
+                  }
+                } catch (_) {
+                  // annotations unavailable — fall back to failure_reason only
+                }
+              }
+
+              return [wsCell, statusMsg, '', '', ''];
+            }));
+
+            await core.summary.addTable([
+              [
+                { data: 'Workspace', header: true },
+                { data: 'Status',    header: true },
+                { data: '+Add',      header: true },
+                { data: '~Change',   header: true },
+                { data: '-Destroy',  header: true },
+              ],
+              ...rows,
+            ]).write();
