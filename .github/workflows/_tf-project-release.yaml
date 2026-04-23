@@ -103,7 +103,7 @@ jobs:
           workspace: ${{ matrix.workspace }}
           var_file: environments/${{ matrix.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ matrix.workspace }}"
-          lock: false
+          args: -lock=false
 
   # ───────────────────────────────────────────────────────────────────────────
   # One apply job per workspace, running only after all plan jobs succeed.
