@@ -87,6 +87,7 @@ jobs:
       contents: read
       pull-requests: write # Required for dflook/terraform-plan PR comments
       actions: read        # Required for reusable workflow to resolve per-job URLs
+      checks: read         # Required for summarize job to fetch check-run annotations
 
     strategy:
       fail-fast: false
