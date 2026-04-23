@@ -63,98 +63,29 @@ jobs:
           echo "aws_credentials=$AWS_CREDS" >> "$GITHUB_OUTPUT"
 
   # ───────────────────────────────────────────────────────────────────────────
-  # One plan job per continuous-deploy workspace.  Plans are read-only so
-  # locking is disabled.  dflook/terraform-plan saves the plan artifact (keyed
-  # by label) so the apply job downstream applies exactly what was reviewed.
-  # ───────────────────────────────────────────────────────────────────────────
-  plan:
-    name: "plan: ${{ inputs.project }} / ${{ matrix.workspace }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: setup
-    if: needs.setup.outputs.has_workspaces == 'true'
-    permissions:
-      id-token: write  # Required for OIDC → AWS
-      contents: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        workspace: ${{ fromJSON(needs.setup.outputs.workspaces) }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Configure AWS credentials (OIDC)
-        if: fromJSON(needs.setup.outputs.aws_credentials)[matrix.workspace]
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
-          mask-aws-account-id: 'true'
-
-      - name: Terraform Plan
-        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          path: ${{ inputs.project }}
-          workspace: ${{ matrix.workspace }}
-          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
-          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
-          args: -lock=false
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # One apply job per workspace, running only after all plan jobs succeed.
-  # Each job is gated by a GitHub Environment:
+  # One workspace release per continuous-deploy workspace, all running in
+  # parallel.  Each entry calls _tf-workspace-release.yaml which internally
+  # sequences plan → apply, with the apply gated by a GitHub Environment:
   #
   #   terraform/<project>/<workspace>
   #
   # Configure required reviewers on these environments in repo Settings →
   # Environments to insert a human approval step before apply.
-  #
-  # Per-workspace concurrency prevents two apply jobs from racing on the same
-  # state file (e.g. a re-run overlapping a still-running apply).
   # ───────────────────────────────────────────────────────────────────────────
-  apply:
-    name: "apply: ${{ inputs.project }} / ${{ matrix.workspace }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    needs: [setup, plan]
-    if: needs.setup.outputs.has_workspaces == 'true' && needs.plan.result == 'success'
-    environment: "terraform/${{ inputs.project }}/${{ matrix.workspace }}"
-    concurrency:
-      group: tf-apply-${{ inputs.project }}-${{ matrix.workspace }}
-      cancel-in-progress: false
-    permissions:
-      id-token: write  # Required for OIDC → AWS
-      contents: read
-
+  release:
+    name: "release: ${{ inputs.project }} / ${{ matrix.workspace }}"
+    needs: [setup]
+    if: needs.setup.outputs.has_workspaces == 'true'
     strategy:
       fail-fast: false
       matrix:
         workspace: ${{ fromJSON(needs.setup.outputs.workspaces) }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Configure AWS credentials (OIDC)
-        if: fromJSON(needs.setup.outputs.aws_credentials)[matrix.workspace]
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
-          mask-aws-account-id: 'true'
-
-      - name: Terraform Apply
-        uses: dflook/terraform-apply@5489b988934a50bf1489d5b7c5253b46520a7dca  # v2.2.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          path: ${{ inputs.project }}
-          workspace: ${{ matrix.workspace }}
-          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
-          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
-          auto_approve: true
+    uses: ./.github/workflows/_tf-workspace-release.yaml
+    with:
+      project: ${{ inputs.project }}
+      workspace: ${{ matrix.workspace }}
+      aws_credentials: ${{ fromJSON(needs.setup.outputs.aws_credentials)[matrix.workspace] }}
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read

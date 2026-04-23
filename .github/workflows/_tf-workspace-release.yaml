@@ -1,0 +1,109 @@
+name: Terraform Workspace Release
+
+# Reusable workflow — plan and apply a single Terraform workspace.
+# Called by _tf-project-release.yaml via a matrix so each workspace gets its
+# own plan → apply pipeline.  The apply job is gated by a GitHub Environment:
+#
+#   terraform/<project>/<workspace>
+#
+# Configure required reviewers on that environment in repo Settings →
+# Environments to insert a human approval step before apply.  If no reviewers
+# are configured the apply runs immediately after plan.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Terraform project directory name (e.g. "tf-network-spoke").
+        type: string
+        required: true
+      workspace:
+        description: Terraform workspace name (e.g. "dev", "staging", "prod").
+        type: string
+        required: true
+      aws_credentials:
+        description: Whether to configure AWS OIDC credentials for this workspace.
+        type: boolean
+        default: false
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Generates a saved plan artifact (keyed by label) for the apply job.
+  # Locking is disabled — this is read-only and we don't want to block applies
+  # already in progress on other branches.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "plan: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Configure AWS credentials (OIDC)
+        if: inputs.aws_credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Plan
+        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ inputs.workspace }}
+          var_file: environments/${{ inputs.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ inputs.workspace }}"
+          add_github_comment: false
+          args: -lock=false
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Applies the exact plan saved above.  Gated by a GitHub Environment so
+  # required reviewers (if configured) must approve before execution begins.
+  #
+  # Per-workspace concurrency prevents two apply jobs from racing on the same
+  # state file (e.g. a re-run overlapping a still-running apply).
+  # ─────────────────────────────────────────────────────────────────────────────
+  apply:
+    name: "apply: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [plan]
+    if: needs.plan.result == 'success'
+    environment: "terraform/${{ inputs.project }}/${{ inputs.workspace }}"
+    concurrency:
+      group: tf-apply-${{ inputs.project }}-${{ inputs.workspace }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Configure AWS credentials (OIDC)
+        if: inputs.aws_credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Apply
+        uses: dflook/terraform-apply@5489b988934a50bf1489d5b7c5253b46520a7dca  # v2.2.3
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ inputs.workspace }}
+          var_file: environments/${{ inputs.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ inputs.workspace }}"
+          add_github_comment: false
+          auto_approve: true
