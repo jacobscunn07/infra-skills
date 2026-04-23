@@ -149,6 +149,7 @@ jobs:
               to_destroy:     process.env.TO_DESTROY      || '0',
               failure_reason: process.env.FAILURE_REASON  || '',
               job_url:        job?.html_url               ?? '',
+              job_id:         job?.id                     ?? null,
             };
             fs.mkdirSync('/tmp/plan-results', { recursive: true });
             fs.writeFileSync(
@@ -176,6 +177,7 @@ jobs:
     if: always()
     permissions:
       contents: read
+      actions: read
 
     steps:
       - name: Download plan results
@@ -215,7 +217,7 @@ jobs:
               return;
             }
 
-            const rows = files.map(f => {
+            const rows = await Promise.all(files.map(async f => {
               const r = JSON.parse(fs.readFileSync(f, 'utf8'));
               const wsCell = r.job_url
                 ? `<a href="${r.job_url}">${r.workspace}</a>`
@@ -223,11 +225,31 @@ jobs:
               if (r.status === 'success') {
                 return [wsCell, '✅', r.to_add, r.to_change, r.to_destroy];
               }
-              const msg = r.failure_reason
-                ? `❌ Failed: ${r.failure_reason}`
-                : '❌ Failed';
-              return [wsCell, msg, '', '', ''];
-            });
+
+              let statusMsg = r.failure_reason ? `❌ ${r.failure_reason}` : '❌ Failed';
+
+              if (r.job_id) {
+                try {
+                  const { data: annotations } = await github.rest.actions.listJobAnnotations({
+                    owner:  context.repo.owner,
+                    repo:   context.repo.repo,
+                    job_id: r.job_id,
+                  });
+                  const errAnnotation = annotations.find(
+                    a => a.annotation_level === 'failure' || a.annotation_level === 'error'
+                  );
+                  if (errAnnotation?.message) {
+                    const truncated = errAnnotation.message.replace(/\n/g, ' ').slice(0, 150);
+                    const ellipsis  = errAnnotation.message.length > 150 ? '…' : '';
+                    statusMsg += ` — ${truncated}${ellipsis}`;
+                  }
+                } catch (_) {
+                  // annotations unavailable — fall back to failure_reason only
+                }
+              }
+
+              return [wsCell, statusMsg, '', '', ''];
+            }));
 
             await core.summary.addTable([
               [
