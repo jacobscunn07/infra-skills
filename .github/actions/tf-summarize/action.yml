@@ -41,4 +41,6 @@ runs:
         SKIPPED_RESULT: ${{ inputs.skipped-job-result }}
         SKIPPED_MESSAGE: ${{ inputs.skipped-message }}
       with:
-        script: ${{ github.action_path }}/summarize.js
+        script: |
+          const fn = require(`${process.env.GITHUB_ACTION_PATH}/summarize.js`);
+          await fn({ github, context, core });
