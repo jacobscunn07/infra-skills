@@ -91,6 +91,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
 
   # ─────────────────────────────────────────────────────────────────────────────
   # tf-data depends on tf-network-spoke (declared in tf-data/ci.yaml).  This job
@@ -115,3 +117,5 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
