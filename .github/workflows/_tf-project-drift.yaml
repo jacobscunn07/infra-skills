@@ -171,77 +171,10 @@ jobs:
       checks: read
 
     steps:
-      - name: Download drift results
-        continue-on-error: true  # Pattern may match nothing if all workspaces failed before uploading
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: ./.github/actions/tf-summarize
         with:
-          pattern: drift-result-${{ inputs.project }}-*
-          path: /tmp/drift-results
-          merge-multiple: true
-
-      - name: Write job summary
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
-        with:
-          script: |
-            const fs   = require('fs');
-            const path = require('path');
-
-            await core.summary.addHeading('${{ inputs.project }}', 2);
-
-            let files = [];
-            try {
-              files = fs.readdirSync('/tmp/drift-results')
-                .filter(f => f.endsWith('.json'))
-                .sort()
-                .map(f => path.join('/tmp/drift-results', f));
-            } catch {}
-
-            if (files.length === 0) {
-              await core.summary.addRaw('No results found.\n').write();
-              return;
-            }
-
-            const rows = await Promise.all(files.map(async f => {
-              const r = JSON.parse(fs.readFileSync(f, 'utf8'));
-              const wsCell = r.job_url
-                ? `<a href="${r.job_url}">${r.workspace}</a>`
-                : r.workspace;
-
-              if (r.status === 'success') {
-                return [wsCell, '✅ No drift'];
-              }
-
-              let statusMsg = r.failure_reason === 'changes-to-apply'
-                ? '❌ Drift detected'
-                : (r.failure_reason ? `❌ ${r.failure_reason}` : '❌ Failed');
-
-              if (r.check_run_id && r.failure_reason !== 'changes-to-apply') {
-                try {
-                  const { data: annotations } = await github.rest.checks.listAnnotations({
-                    owner:         context.repo.owner,
-                    repo:          context.repo.repo,
-                    check_run_id:  r.check_run_id,
-                  });
-                  const errAnnotation = annotations.find(
-                    a => a.annotation_level === 'failure'
-                  );
-                  if (errAnnotation?.message) {
-                    const truncated = errAnnotation.message.replace(/\n/g, ' ').slice(0, 150);
-                    const ellipsis  = errAnnotation.message.length > 150 ? '…' : '';
-                    statusMsg += ` — ${truncated}${ellipsis}`;
-                  }
-                } catch (_) {
-                  // annotations unavailable — fall back to failure_reason only
-                }
-              }
-
-              return [wsCell, statusMsg];
-            }));
-
-            await core.summary.addTable([
-              [
-                { data: 'Workspace', header: true },
-                { data: 'Status',    header: true },
-              ],
-              ...rows,
-            ]).write();
+          type: drift
+          project: ${{ inputs.project }}
