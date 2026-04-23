@@ -149,7 +149,7 @@ jobs:
               to_destroy:     process.env.TO_DESTROY      || '0',
               failure_reason: process.env.FAILURE_REASON  || '',
               job_url:        job?.html_url               ?? '',
-              job_id:         job?.id                     ?? null,
+              check_run_id:   job?.check_run_url ? Number(job.check_run_url.split('/').pop()) : null,
             };
             fs.mkdirSync('/tmp/plan-results', { recursive: true });
             fs.writeFileSync(
@@ -177,7 +177,7 @@ jobs:
     if: always()
     permissions:
       contents: read
-      actions: read
+      checks: read
 
     steps:
       - name: Download plan results
@@ -228,15 +228,15 @@ jobs:
 
               let statusMsg = r.failure_reason ? `❌ ${r.failure_reason}` : '❌ Failed';
 
-              if (r.job_id) {
+              if (r.check_run_id) {
                 try {
-                  const { data: annotations } = await github.rest.actions.listJobAnnotations({
-                    owner:  context.repo.owner,
-                    repo:   context.repo.repo,
-                    job_id: r.job_id,
+                  const { data: annotations } = await github.rest.checks.listAnnotations({
+                    owner:         context.repo.owner,
+                    repo:          context.repo.repo,
+                    check_run_id:  r.check_run_id,
                   });
                   const errAnnotation = annotations.find(
-                    a => a.annotation_level === 'failure' || a.annotation_level === 'error'
+                    a => a.annotation_level === 'failure'
                   );
                   if (errAnnotation?.message) {
                     const truncated = errAnnotation.message.replace(/\n/g, ' ').slice(0, 150);
