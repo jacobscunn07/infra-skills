@@ -1,0 +1,113 @@
+name: Terraform Plan
+
+# On-demand plan for any project and workspace combination.
+# Choosing a "/ all" target plans every workspace discovered under the
+# project's environments/ directory.
+#
+# NOTE: the target dropdown is a static list — add new entries here whenever
+# a new Terraform project (directory with a backend.tf) is added to the repo.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Project and workspace to plan (select '/ all' to plan every workspace)"
+        required: true
+        type: choice
+        options:
+          - tf-testA / dev
+          - tf-testA / staging
+          - tf-testA / prod
+          - tf-testA / all
+          - tf-testB / dev
+          - tf-testB / staging
+          - tf-testB / prod
+          - tf-testB / all
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Builds the matrix from the workflow inputs by delegating to the shared
+  # composite action.  The project and workspace inputs are passed directly as
+  # filters — no base_ref is used here because this is an on-demand plan, not
+  # a PR diff.  The action fails fast with a clear message if the requested
+  # project or workspace does not exist in the repo.
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Build plan matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.group.outputs.matrix }}
+      has_entries: ${{ steps.build-matrix.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      # Parse "project / workspace" into separate outputs. "all" maps to an
+      # empty workspace string, which tells the matrix action to discover every
+      # workspace under the project's environments/ directory.
+      - name: Parse target
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        with:
+          script: |
+            const [project, workspace] = '${{ inputs.target }}'.split('/').map(s => s.trim());
+            core.setOutput('project', project);
+            core.setOutput('workspace', workspace === 'all' ? '' : workspace);
+
+      - name: Build matrix
+        id: build-matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          project: ${{ steps.target.outputs.project }}
+          workspace: ${{ steps.target.outputs.workspace }}
+
+      # Group per-workspace entries by project so the plan job can fan out
+      # workspaces for a project in one reusable workflow call.
+      - name: Group workspaces by project
+        id: group
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          FLAT_MATRIX: ${{ steps.build-matrix.outputs.matrix }}
+        with:
+          script: |
+            const flat = JSON.parse(process.env.FLAT_MATRIX || '{"include":[]}');
+            const projectMap = {};
+            for (const { project, workspace, aws_credentials } of flat.include) {
+              if (!projectMap[project]) {
+                projectMap[project] = { project, workspaces: [], aws_credentials: {} };
+              }
+              projectMap[project].workspaces.push(workspace);
+              projectMap[project].aws_credentials[workspace] = aws_credentials;
+            }
+            core.setOutput('matrix', JSON.stringify({ include: Object.values(projectMap) }));
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One call to the reusable workflow per project entry produced by setup.
+  # Each call fans out plan jobs over the project's workspaces internally,
+  # grouping per-workspace results together in the GitHub Actions UI.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "${{ matrix.project }}"
+    needs: setup
+    if: needs.setup.outputs.has_entries == 'true'
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    uses: ./.github/workflows/_tf-project-plan.yaml
+    with:
+      project: ${{ matrix.project }}
+      workspaces: ${{ toJSON(matrix.workspaces) }}
+      aws_credentials: ${{ toJSON(matrix.aws_credentials) }}
+    secrets: inherit

@@ -592,15 +592,36 @@ jobs:
 
 ## Security Best Practices
 
-### Pin Third-Party Actions to a Full SHA
+### Pin Third-Party Actions to a Full Commit SHA
+
+**Always pin every `uses:` reference to a full commit SHA.** Tags are mutable — an attacker who compromises an action's repo can move a tag to malicious code. A SHA is immutable.
+
+This applies to all actions, including well-known ones (`actions/*`, `aws-actions/*`, etc.).
 
 ```yaml
-# Vulnerable — a tag can be moved
+# Wrong — tag can be silently moved to a different commit
 - uses: actions/checkout@v4
 
-# Secure — immutable reference (audit the SHA before using)
-- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+# Correct — immutable reference; tag in comment for human readability
+- uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 ```
+
+**How to resolve a SHA for a tag:**
+
+```bash
+# Resolve the commit SHA a tag points to (handles both lightweight and annotated tags)
+REPO=actions/checkout TAG=v4
+RESPONSE=$(curl -sf "https://api.github.com/repos/${REPO}/git/ref/tags/${TAG}")
+SHA=$(echo "$RESPONSE" | jq -r '.object.sha')
+TYPE=$(echo "$RESPONSE" | jq -r '.object.type')
+# Annotated tags point to a tag object — dereference to the commit
+if [ "$TYPE" = "tag" ]; then
+  SHA=$(curl -sf "https://api.github.com/repos/${REPO}/git/tags/${SHA}" | jq -r '.object.sha')
+fi
+echo "$SHA"
+```
+
+Re-run this whenever you want to update to a newer version and update the comment to reflect the new tag.
 
 ### Prevent Script Injection
 
@@ -842,7 +863,7 @@ ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
 |---|---|
 | Forgetting `id:` on a step whose output you need | Add `id: my-step` to the step |
 | Using `${{ secrets.X }}` in `run:` directly | Pass through `env:` to prevent injection |
-| Pinning to a tag (`@v4`) for security | Pin to a full SHA for third-party actions |
+| Using a tag (`@v4`) instead of a commit SHA | Always pin to a full SHA — tags are mutable and can be moved to malicious code |
 | Using `pull_request_target` + code checkout | Separate privileged and code-running jobs |
 | `cancel-in-progress: true` on deployments | Use `false` for deployments to avoid partial deploys |
 | No `timeout-minutes` on long-running jobs | Add `timeout-minutes: 30` to avoid 6-hour hangs |

@@ -1,0 +1,204 @@
+name: Terraform Workspace Release
+
+# Reusable workflow — plan and apply a single Terraform workspace.
+# Called by _tf-project-release.yaml via a matrix so each workspace gets its
+# own plan → apply pipeline.  The apply job is gated by a GitHub Environment:
+#
+#   terraform/<project>/<workspace>
+#
+# Configure required reviewers on that environment in repo Settings →
+# Environments to insert a human approval step before apply.  If no reviewers
+# are configured the apply runs immediately after plan.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Terraform project directory name (e.g. "tf-network-spoke").
+        type: string
+        required: true
+      workspace:
+        description: Terraform workspace name (e.g. "dev", "staging", "prod").
+        type: string
+        required: true
+      aws_credentials:
+        description: Whether to configure AWS OIDC credentials for this workspace.
+        type: boolean
+        default: false
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Generates a saved plan artifact (keyed by label) for the apply job.
+  # Locking is disabled — this is read-only and we don't want to block applies
+  # already in progress on other branches.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "plan: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+    outputs:
+      failure_reason: ${{ steps.plan.outputs.failure-reason }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Configure AWS credentials (OIDC)
+        if: inputs.aws_credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Plan
+        id: plan
+        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ inputs.workspace }}
+          var_file: ${{ inputs.project }}/environments/${{ inputs.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ inputs.workspace }}"
+          add_github_comment: false
+          args: -lock=false
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Applies the exact plan saved above.  Gated by a GitHub Environment so
+  # required reviewers (if configured) must approve before execution begins.
+  #
+  # Per-workspace concurrency prevents two apply jobs from racing on the same
+  # state file (e.g. a re-run overlapping a still-running apply).
+  # ─────────────────────────────────────────────────────────────────────────────
+  apply:
+    name: "apply: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [plan]
+    if: needs.plan.result == 'success'
+    environment: "terraform/${{ inputs.project }}/${{ inputs.workspace }}"
+    concurrency:
+      group: tf-apply-${{ inputs.project }}-${{ inputs.workspace }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+    outputs:
+      to_add:         ${{ steps.apply.outputs.to_add }}
+      to_change:      ${{ steps.apply.outputs.to_change }}
+      to_destroy:     ${{ steps.apply.outputs.to_destroy }}
+      failure_reason: ${{ steps.apply.outputs.failure-reason }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Configure AWS credentials (OIDC)
+        if: inputs.aws_credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Apply
+        id: apply
+        uses: dflook/terraform-apply@5489b988934a50bf1489d5b7c5253b46520a7dca  # v2.2.3
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ inputs.workspace }}
+          var_file: ${{ inputs.project }}/environments/${{ inputs.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ inputs.workspace }}"
+          add_github_comment: false
+          auto_approve: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Saves a per-workspace result artifact so the project-level summarize job can
+  # build a summary table across all workspaces.  Runs even when plan or apply
+  # fails so failures are represented in the summary.
+  # ─────────────────────────────────────────────────────────────────────────────
+  report:
+    name: "report: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [plan, apply]
+    if: always()
+    permissions:
+      contents: read
+      actions: read  # Required to resolve per-job URLs for the summary table
+
+    steps:
+      - name: Save release result
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          PROJECT:              ${{ inputs.project }}
+          WORKSPACE:            ${{ inputs.workspace }}
+          PLAN_RESULT:          ${{ needs.plan.result }}
+          APPLY_RESULT:         ${{ needs.apply.result }}
+          TO_ADD:               ${{ needs.apply.outputs.to_add }}
+          TO_CHANGE:            ${{ needs.apply.outputs.to_change }}
+          TO_DESTROY:           ${{ needs.apply.outputs.to_destroy }}
+          APPLY_FAILURE_REASON: ${{ needs.apply.outputs.failure_reason }}
+          PLAN_FAILURE_REASON:  ${{ needs.plan.outputs.failure_reason }}
+        with:
+          script: |
+            const fs = require('fs');
+            const project     = process.env.PROJECT;
+            const ws          = process.env.WORKSPACE;
+            const planResult  = process.env.PLAN_RESULT;
+            const applyResult = process.env.APPLY_RESULT;
+
+            let status, failureReason;
+            if (applyResult === 'success') {
+              status = 'success';
+              failureReason = '';
+            } else if (applyResult === 'failure') {
+              status = 'failure';
+              failureReason = process.env.APPLY_FAILURE_REASON || '';
+            } else {
+              // Apply skipped — plan failed or was skipped upstream
+              status = planResult === 'failure' ? 'failure' : planResult;
+              failureReason = process.env.PLAN_FAILURE_REASON || '';
+            }
+
+            const resp = await github.rest.actions.listJobsForWorkflowRun({
+              owner:    context.repo.owner,
+              repo:     context.repo.repo,
+              run_id:   context.runId,
+              per_page: 100,
+            });
+            const applyJobName = `apply: ${project} / ${ws}`;
+            const planJobName  = `plan: ${project} / ${ws}`;
+            const job = resp.data.jobs.find(j => j.name === applyJobName)
+                     ?? resp.data.jobs.find(j => j.name === planJobName);
+
+            const result = {
+              workspace:      ws,
+              status,
+              to_add:         process.env.TO_ADD     || '0',
+              to_change:      process.env.TO_CHANGE  || '0',
+              to_destroy:     process.env.TO_DESTROY || '0',
+              failure_reason: failureReason,
+              job_url:        job?.html_url          ?? '',
+              check_run_id:   job?.check_run_url
+                ? Number(job.check_run_url.split('/').pop())
+                : null,
+            };
+            fs.mkdirSync('/tmp/release-results', { recursive: true });
+            fs.writeFileSync(
+              `/tmp/release-results/${ws}.json`,
+              JSON.stringify(result),
+            );
+
+      - name: Upload release result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: release-result-${{ inputs.project }}-${{ inputs.workspace }}
+          path: /tmp/release-results/${{ inputs.workspace }}.json
+          retention-days: 1

@@ -1,0 +1,165 @@
+name: Terraform Release
+
+# Triggered on every push to main (i.e. after a PR is merged).
+# A setup job determines which projects have relevant changes, then calls the
+# shared tf-project-release workflow for each project in dependency order.
+#
+# Dependency ordering is expressed explicitly via `needs:` between project
+# jobs — if project B depends on project A, B's job lists A's job in `needs:`.
+# The order here must match the project-dependencies declared in each ci.yaml.
+#
+# To add a new project:
+#   1. Add a new job calling tf-project-release.yml with the correct `needs:`.
+on:
+  push:
+    branches: [main]
+
+# Queue releases — never cancel a deployment already in progress.
+# A cancelled apply risks leaving infrastructure in a half-applied state.
+concurrency:
+  group: tf-release
+  cancel-in-progress: false
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Runs once before any project deployment.  Delegates change-detection and
+  # workspace filtering to the shared get-project-workspace-matrix action
+  # (same action used by tf-ci), then converts its matrix output into a
+  # per-project deploy map consumed by the downstream jobs.
+  #
+  # fetch-depth: 0 is required so git can resolve github.event.before (it may
+  # not be present in a shallow clone).
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Determine which projects to deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Build project matrix
+        id: matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          base_sha: ${{ github.event.before }}
+          release_only: 'true'
+
+      - name: Build deploy map
+        id: gate
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            const matrix    = JSON.parse(process.env.MATRIX || '{"include":[]}');
+            const toRelease = new Set(matrix.include.map(e => e.project));
+
+            const projects = fs.readdirSync('.')
+              .filter(d => fs.existsSync(`${d}/backend.tf`))
+              .sort();
+
+            core.setOutput('deploy', JSON.stringify(
+              Object.fromEntries(projects.map(p => [p, toRelease.has(p)]))
+            ));
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # tf-testA has no project-dependencies so it runs as soon as setup completes.
+  # Skipped entirely when its deploy flag is false.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-testA:
+    name: Deploy tf-testA
+    needs: [setup]
+    if: fromJSON(needs.setup.outputs.deploy)['tf-testA']
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-testA
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # tf-testB depends on tf-testA (declared in tf-testB/ci.yaml).  This job
+  # waits for deploy-tf-testA to finish before starting.
+  #
+  # always() is required so GitHub does not auto-skip this job when
+  # deploy-tf-testA is skipped (i.e. when only tf-testB/ files changed).
+  # != 'failure' permits both the success and skipped results while still
+  # blocking tf-testB from deploying if tf-testA errored.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-testB:
+    name: Deploy tf-testB
+    needs: [setup, deploy-tf-testA]
+    if: |
+      always() &&
+      fromJSON(needs.setup.outputs.deploy)['tf-testB'] &&
+      needs.deploy-tf-testA.result != 'failure'
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-testB
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # tf-network-spoke has no project-dependencies so it runs as soon as setup
+  # completes.  Skipped entirely when its deploy flag is false.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-network-spoke:
+    name: Deploy tf-network-spoke
+    needs: [setup]
+    if: fromJSON(needs.setup.outputs.deploy)['tf-network-spoke']
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-network-spoke
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # tf-data depends on tf-network-spoke (declared in tf-data/ci.yaml).  This job
+  # waits for deploy-tf-network-spoke to finish before starting.
+  #
+  # always() is required so GitHub does not auto-skip this job when
+  # deploy-tf-network-spoke is skipped (i.e. when only tf-data/ files changed).
+  # != 'failure' permits both the success and skipped results while still
+  # blocking tf-data from deploying if tf-network-spoke errored.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-data:
+    name: Deploy tf-data
+    needs: [setup, deploy-tf-network-spoke]
+    if: |
+      always() &&
+      fromJSON(needs.setup.outputs.deploy)['tf-data'] &&
+      needs.deploy-tf-network-spoke.result != 'failure'
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-data
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations

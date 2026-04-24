@@ -1,0 +1,146 @@
+name: Terraform Project Plan
+
+# Reusable workflow — called once per project by tf-plan.yaml.
+# Runs a plan for each workspace in the project.  Intended for on-demand
+# use outside of a PR context, so no PR comment permissions are requested.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Terraform project directory to plan.
+        type: string
+        required: true
+      workspaces:
+        description: JSON array of workspace names to plan (e.g. '["dev","prod"]').
+        type: string
+        required: true
+      aws_credentials:
+        description: >
+          JSON object mapping each workspace name to a boolean — whether to run
+          the AWS credentials step for that workspace (e.g. '{"dev":true,"prod":false}').
+        type: string
+        required: false
+        default: '{}'
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One plan job per workspace.  When triggered outside a PR context the plan
+  # output is written to the job step summary (visible in the workflow run UI)
+  # rather than a PR comment.  Plans are read-only — locking is disabled to
+  # avoid dangling locks if the job is cancelled mid-run.
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "${{ matrix.workspace }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+      actions: read    # Required to resolve per-job URLs for the summary table
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJSON(inputs.workspaces) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Configure AWS credentials (OIDC)
+        if: fromJSON(inputs.aws_credentials)[matrix.workspace]
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'true'
+
+      - name: Terraform Plan
+        id: plan
+        uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ${{ inputs.project }}
+          workspace: ${{ matrix.workspace }}
+          var_file: ${{ inputs.project }}/environments/${{ matrix.workspace }}/terraform.tfvars
+          label: "${{ inputs.project }} / ${{ matrix.workspace }}"
+          args: -lock=false
+
+      - name: Save plan result
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          PROJECT:        ${{ inputs.project }}
+          WORKSPACE:      ${{ matrix.workspace }}
+          PLAN_STATUS:    ${{ steps.plan.outcome }}
+          TO_ADD:         ${{ steps.plan.outputs.to_add }}
+          TO_CHANGE:      ${{ steps.plan.outputs.to_change }}
+          TO_DESTROY:     ${{ steps.plan.outputs.to_destroy }}
+          FAILURE_REASON: ${{ steps.plan.outputs.failure-reason }}
+        with:
+          script: |
+            const fs      = require('fs');
+            const project = process.env.PROJECT;
+            const ws      = process.env.WORKSPACE;
+
+            const resp = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const job = resp.data.jobs.find(
+              j => j.name === `${project} / ${ws}` || j.name === ws,
+            );
+
+            const result = {
+              workspace:      ws,
+              status:         process.env.PLAN_STATUS,
+              to_add:         process.env.TO_ADD          || '0',
+              to_change:      process.env.TO_CHANGE       || '0',
+              to_destroy:     process.env.TO_DESTROY      || '0',
+              failure_reason: process.env.FAILURE_REASON  || '',
+              job_url:        job?.html_url               ?? '',
+              check_run_id:   job?.check_run_url ? Number(job.check_run_url.split('/').pop()) : null,
+            };
+            fs.mkdirSync('/tmp/plan-results', { recursive: true });
+            fs.writeFileSync(
+              `/tmp/plan-results/${result.workspace}.json`,
+              JSON.stringify(result),
+            );
+
+      - name: Upload plan result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: plan-result-${{ inputs.project }}-${{ matrix.workspace }}
+          path: /tmp/plan-results/${{ matrix.workspace }}.json
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Collects per-workspace plan results and writes a single summary table.
+  # Runs even when plan fails.
+  # ─────────────────────────────────────────────────────────────────────────────
+  summarize:
+    name: Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [plan]
+    if: always()
+    permissions:
+      contents: read
+      checks: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: ./.github/actions/tf-summarize
+        with:
+          type: plan
+          project: ${{ inputs.project }}

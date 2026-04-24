@@ -1,0 +1,46 @@
+name: Terraform Summarize
+description: >
+  Downloads per-workspace result artifacts and writes a formatted summary
+  table to the GitHub Actions job summary. Supports plan, drift, and release
+  result types.
+
+inputs:
+  type:
+    description: "Result type: plan, drift, or release."
+    required: true
+  project:
+    description: "Terraform project name. Used to build the artifact download pattern."
+    required: true
+  skipped-job-result:
+    description: >
+      Result of the upstream job (needs.<job>.result). When "skipped", renders
+      a warning callout instead of a results table.
+    required: false
+    default: ""
+  skipped-message:
+    description: Warning body to display when the upstream job was skipped.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Download results
+      continue-on-error: true  # Pattern may match nothing when upstream job was skipped
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      with:
+        pattern: ${{ inputs.type }}-result-${{ inputs.project }}-*
+        path: /tmp/${{ inputs.type }}-results
+        merge-multiple: true
+
+    - name: Write job summary
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+      env:
+        SUMMARY_TYPE: ${{ inputs.type }}
+        PROJECT: ${{ inputs.project }}
+        SKIPPED_RESULT: ${{ inputs.skipped-job-result }}
+        SKIPPED_MESSAGE: ${{ inputs.skipped-message }}
+      with:
+        script: |
+          const fn = require(`${process.env.GITHUB_ACTION_PATH}/summarize.js`);
+          await fn({ github, context, core });

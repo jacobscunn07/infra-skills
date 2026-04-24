@@ -1,0 +1,117 @@
+name: Terraform Project Release
+
+# Reusable workflow — plan and apply all continuous-deploy workspaces for a
+# single Terraform project.  The caller is responsible for deciding whether
+# this project should run at all (changed file detection, dependency ordering).
+# This workflow assumes it should run and focuses only on plan → apply.
+#
+# Callers pass `secrets: inherit` so AWS_ROLE_ARN and GITHUB_TOKEN are
+# available without explicit wiring.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: >
+          Terraform project directory name (e.g. "tf-network-spoke", "tf-data").
+          Must contain a backend.tf and at least one environments/ subdirectory.
+        type: string
+        required: true
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Discovers the continuous-deploy workspaces for this project.  No base_sha
+  # is passed — the caller already determined this project should run, so we
+  # include all workspaces that have opted in to continuous deployment.
+  # ───────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Discover workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      workspaces: ${{ steps.extract-workspaces.outputs.workspaces }}
+      aws_credentials: ${{ steps.extract-workspaces.outputs.aws_credentials }}
+      has_workspaces: ${{ steps.workspace-matrix.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Discover continuous-deploy workspaces
+        id: workspace-matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          project: ${{ inputs.project }}
+          release_only: "true"
+
+      # The composite action returns { project, workspaces[] } — extract the
+      # workspaces array from the single entry (project is already filtered).
+      - name: Extract workspaces from matrix
+        id: extract-workspaces
+        if: steps.workspace-matrix.outputs.has_changes == 'true'
+        env:
+          MATRIX: ${{ steps.workspace-matrix.outputs.matrix }}
+        run: |
+          WORKSPACES=$(echo "$MATRIX" | jq -c '.include[0].workspaces')
+          AWS_CREDS=$(echo "$MATRIX" | jq -c '.include[0].aws_credentials')
+          echo "workspaces=$WORKSPACES" >> "$GITHUB_OUTPUT"
+          echo "aws_credentials=$AWS_CREDS" >> "$GITHUB_OUTPUT"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # One workspace release per continuous-deploy workspace, all running in
+  # parallel.  Each entry calls _tf-workspace-release.yaml which internally
+  # sequences plan → apply, with the apply gated by a GitHub Environment:
+  #
+  #   terraform/<project>/<workspace>
+  #
+  # Configure required reviewers on these environments in repo Settings →
+  # Environments to insert a human approval step before apply.
+  # ───────────────────────────────────────────────────────────────────────────
+  release:
+    name: "release: ${{ inputs.project }} / ${{ matrix.workspace }}"
+    needs: [setup]
+    if: needs.setup.outputs.has_workspaces == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJSON(needs.setup.outputs.workspaces) }}
+    uses: ./.github/workflows/_tf-workspace-release.yaml
+    with:
+      project: ${{ inputs.project }}
+      workspace: ${{ matrix.workspace }}
+      aws_credentials: ${{ fromJSON(needs.setup.outputs.aws_credentials)[matrix.workspace] }}
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # Passed to the report job inside the reusable workflow
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Collects per-workspace release results and writes a single summary table.
+  # Runs even when release fails or is skipped.
+  # ───────────────────────────────────────────────────────────────────────────
+  summarize:
+    name: Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [release]
+    if: always()
+    permissions:
+      contents: read
+      checks: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: ./.github/actions/tf-summarize
+        with:
+          type: release
+          project: ${{ inputs.project }}
+          skipped-job-result: ${{ needs.release.result }}
+          skipped-message: "Release was skipped — no continuous-deploy workspaces found."

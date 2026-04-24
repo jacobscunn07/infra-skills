@@ -1,0 +1,251 @@
+name: Terraform Drift
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # Every day at 02:00 UTC
+  workflow_dispatch: # Manual trigger for testing
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Discovers all Terraform projects and their workspaces at runtime using the
+  # shared terraform-matrix composite action.  No base_ref is passed so all
+  # projects are included (drift detection scans everything unconditionally).
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Discover projects and workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.group.outputs.matrix }}
+      has_entries: ${{ steps.build-matrix.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Build dynamic matrix
+        id: build-matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+
+      # Group per-workspace entries by project so the drift job can fan out
+      # workspaces for a project in one reusable workflow call.
+      - name: Group workspaces by project
+        id: group
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          FLAT_MATRIX: ${{ steps.build-matrix.outputs.matrix }}
+        with:
+          script: |
+            const flat = JSON.parse(process.env.FLAT_MATRIX || '{"include":[]}');
+            const projectMap = {};
+            for (const { project, workspace, aws_credentials } of flat.include) {
+              if (!projectMap[project]) {
+                projectMap[project] = { project, workspaces: [], aws_credentials: {} };
+              }
+              projectMap[project].workspaces.push(workspace);
+              projectMap[project].aws_credentials[workspace] = aws_credentials;
+            }
+            core.setOutput('matrix', JSON.stringify({ include: Object.values(projectMap) }));
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One call to the reusable workflow per project.  Each call fans out
+  # drift-detection jobs over the project's workspaces internally and uploads
+  # a metadata artifact for any workspace where drift is found.  The report
+  # job below aggregates those artifacts regardless of how many projects ran.
+  # ─────────────────────────────────────────────────────────────────────────────
+  drift:
+    name: "${{ matrix.project }}"
+    needs: setup
+    if: needs.setup.outputs.has_entries == 'true'
+    permissions:
+      id-token: write  # Required for OIDC → AWS
+      contents: read
+      actions: read    # Required for reusable workflow to resolve per-job URLs
+      checks: read     # Required for summarize job to fetch check-run annotations
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    uses: ./.github/workflows/_tf-project-drift.yaml
+    with:
+      project: ${{ matrix.project }}
+      workspaces: ${{ toJSON(matrix.workspaces) }}
+      aws_credentials: ${{ toJSON(matrix.aws_credentials) }}
+    secrets: inherit
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Aggregates results from every matrix job, then sends notifications and
+  # opens a GitHub Issue when drift is found.
+  # Runs unconditionally (always()) so it executes even when matrix jobs fail.
+  # ─────────────────────────────────────────────────────────────────────────────
+  report:
+    name: Report Results
+    runs-on: ubuntu-latest
+    needs: [setup, drift]
+    if: always()
+    permissions:
+      contents: read
+
+    steps:
+      # Check which optional integrations are configured by mapping secrets to
+      # env vars (the only place secrets are available) and testing for emptiness.
+      # The outputs are then safe to reference in subsequent if: conditions.
+      - name: Check optional integrations
+        id: integrations
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          MAIL_SERVER:       ${{ secrets.MAIL_SERVER }}
+          MAIL_PORT:         ${{ secrets.MAIL_PORT }}
+          MAIL_USERNAME:     ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD:     ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TO:           ${{ secrets.MAIL_TO }}
+          MAIL_FROM:         ${{ secrets.MAIL_FROM }}
+        with:
+          script: |
+            const e = process.env;
+            core.setOutput('slack', String(!!e.SLACK_WEBHOOK_URL));
+            core.setOutput('email', String(!!(
+              e.MAIL_SERVER && e.MAIL_PORT && e.MAIL_USERNAME &&
+              e.MAIL_PASSWORD && e.MAIL_TO && e.MAIL_FROM
+            )));
+
+      - name: Download all drift artifacts
+        id: download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: drift__*
+          path: drift-reports/
+        # No-op when no drift artifacts were uploaded; carry on either way.
+        continue-on-error: true
+
+      - name: Build drift report
+        id: report
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        with:
+          script: |
+            const fs = require('fs');
+
+            const globber = await glob.create('drift-reports/**/drift-meta.json');
+            const metaFiles = await globber.glob();
+
+            if (metaFiles.length === 0) {
+              core.setOutput('has_drift', 'false');
+              await core.summary
+                .addHeading('Terraform Drift Detection')
+                .addRaw('\n\n**Status:** :white_check_mark: No drift detected\n\nAll projects and workspaces match their Terraform configuration.')
+                .write();
+              return;
+            }
+
+            core.setOutput('has_drift', 'true');
+
+            const drifted = metaFiles.map(f => JSON.parse(fs.readFileSync(f, 'utf8')));
+
+            await core.summary
+              .addHeading('Terraform Drift Detection')
+              .addRaw('\n\n**Status:** :rotating_light: Drift detected\n\n### Affected workspaces\n\n')
+              .addTable([
+                [{ data: 'Project', header: true }, { data: 'Workspace', header: true }],
+                ...drifted.map(({ project, workspace }) => [`\`${project}\``, `\`${workspace}\``]),
+              ])
+              .addRaw('\n\n> Review the plan output for each affected workspace in the job steps above.')
+              .write();
+
+            const driftTable = '| Project | Workspace |\n|---|---|\n' +
+              drifted.map(({ project, workspace }) => `| \`${project}\` | \`${workspace}\` |`).join('\n');
+            const driftPlain = drifted.map(({ project, workspace }) => `• ${project} / ${workspace}`).join('\n');
+
+            core.setOutput('drift_table', driftTable);
+            core.setOutput('drift_plain', driftPlain);
+
+      # ── Slack notification ────────────────────────────────────────────────────
+      - name: Notify Slack (drift found)
+        if: steps.report.outputs.has_drift == 'true' && steps.integrations.outputs.slack == 'true'
+        uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95  # v3.0.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":rotating_light: *Terraform drift detected*",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": ":rotating_light: Terraform drift detected"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "The nightly drift scan found differences between live AWS resources and Terraform state.\n\n*Affected workspaces:*\n${{ steps.report.outputs.drift_plain }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View workflow run" },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+
+      - name: Notify Slack (all clear)
+        if: steps.report.outputs.has_drift == 'false' && needs.drift.result == 'success' && steps.integrations.outputs.slack == 'true'
+        uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95  # v3.0.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":white_check_mark: Terraform drift scan complete — no drift detected across all projects and workspaces."
+            }
+
+      # ── Email notification ────────────────────────────────────────────────────
+      - name: Send email (drift found)
+        if: steps.report.outputs.has_drift == 'true' && steps.integrations.outputs.email == 'true'
+        uses: dawidd6/action-send-mail@d38f3f7cd391cdebfe0d38efc3998b935e951c4f  # v16
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "[ACTION REQUIRED] Terraform drift detected — ${{ github.repository }}"
+          to: ${{ secrets.MAIL_TO }}
+          from: ${{ secrets.MAIL_FROM }}
+          html_body: |
+            <h2>Terraform drift detected</h2>
+            <p>
+              The nightly drift-detection workflow found differences between live AWS
+              resources and the Terraform configuration in
+              <strong>${{ github.repository }}</strong>.
+            </p>
+            <h3>Affected workspaces</h3>
+            <table border="1" cellpadding="6" cellspacing="0">
+              <tr><th>Project</th><th>Workspace</th></tr>
+              ${{ steps.report.outputs.drift_table }}
+            </table>
+            <p>
+              Review the plan output in the
+              <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">workflow run</a>
+              and reconcile or accept the drift.
+            </p>
+            <hr/>
+            <small>
+              Sent by the <em>Terraform Drift Detection</em> workflow ·
+              Run <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">${{ github.run_id }}</a>
+            </small>

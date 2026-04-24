@@ -1,0 +1,16 @@
+enabled: true
+aws-credentials: false
+
+workspaces:
+  dev:
+    enabled: true
+    continuous-deploy: true
+  staging:
+    enabled: true
+    continuous-deploy: true
+  prod:
+    enabled: true
+    continuous-deploy: false
+
+project-dependencies:
+  - tf-testA

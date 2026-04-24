@@ -1,0 +1,101 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+# Cancel any in-progress run for the same PR when a new commit is pushed,
+# avoiding stale plan comments and wasted runner minutes.
+concurrency:
+  group: tf-plan-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least-privilege defaults — jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Discovers which Terraform projects have changed in this PR using the shared
+  # terraform-matrix composite action.  base_ref is passed so only projects
+  # with changed files are included.  fetch-depth: 0 is required on checkout
+  # so the merge base is available for the git diff inside the action.
+  #
+  # Note: changes to shared modules/ do not automatically trigger plans for
+  # dependent projects — add an explicit modules/ → project mapping if needed.
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Discover changed projects and workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.group.outputs.matrix }}
+      has_changes: ${{ steps.build-matrix.outputs.has_changes }}
+
+    steps:
+      # Full history is required so git can find the merge base between HEAD
+      # and the PR's base branch when computing the changed file list.
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Build dynamic matrix
+        id: build-matrix
+        uses: ./.github/actions/get-project-workspace-matrix
+        with:
+          base_ref: ${{ github.base_ref }}
+
+      # Group per-workspace entries by project so the ci job can run fmt,
+      # validate, and plan for all workspaces of a project in one call.
+      - name: Group workspaces by project
+        id: group
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9
+        env:
+          FLAT_MATRIX: ${{ steps.build-matrix.outputs.matrix }}
+        with:
+          script: |
+            const flat = JSON.parse(process.env.FLAT_MATRIX || '{"include":[]}');
+            const projectMap = {};
+            for (const { project, workspace, aws_credentials } of flat.include) {
+              if (!projectMap[project]) {
+                projectMap[project] = { project, workspaces: [], aws_credentials: {} };
+              }
+              projectMap[project].workspaces.push(workspace);
+              projectMap[project].aws_credentials[workspace] = aws_credentials;
+            }
+            core.setOutput('matrix', JSON.stringify({ include: Object.values(projectMap) }));
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # One call to the reusable workflow per changed project.  Each call runs fmt,
+  # validate, and a plan matrix for all of that project's workspaces — grouping
+  # all per-project jobs together in the GitHub Actions UI.
+  #
+  # The calling job must grant the superset of permissions needed by the
+  # reusable workflow's jobs (id-token for OIDC, pull-requests for plan comments).
+  # fail-fast: false ensures every project is fully checked in one pass.
+  # ─────────────────────────────────────────────────────────────────────────────
+  ci:
+    name: "${{ matrix.project }}"
+    needs: setup
+    if: needs.setup.outputs.has_changes == 'true'
+    permissions:
+      id-token: write      # Required for OIDC → AWS in the plan job
+      contents: read
+      pull-requests: write # Required for dflook/terraform-plan PR comments
+      actions: read        # Required for reusable workflow to resolve per-job URLs
+      checks: read         # Required for summarize job to fetch check-run annotations
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    uses: ./.github/workflows/_tf-project-ci.yaml
+    with:
+      project: ${{ matrix.project }}
+      workspaces: ${{ toJSON(matrix.workspaces) }}
+      aws_credentials: ${{ toJSON(matrix.aws_credentials) }}
+    secrets: inherit
