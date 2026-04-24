@@ -75,7 +75,7 @@ jobs:
   # all per-project jobs together in the GitHub Actions UI.
   #
   # The calling job must grant the superset of permissions needed by the
-  # reusable workflow's jobs (id-token for OIDC, pull-requests for plan comments).
+  # reusable workflow's jobs (id-token for OIDC).
   # fail-fast: false ensures every project is fully checked in one pass.
   # ─────────────────────────────────────────────────────────────────────────────
   ci:
@@ -83,11 +83,10 @@ jobs:
     needs: setup
     if: needs.setup.outputs.has_changes == 'true'
     permissions:
-      id-token: write      # Required for OIDC → AWS in the plan job
+      id-token: write  # Required for OIDC → AWS in the plan job
       contents: read
-      pull-requests: write # Required for dflook/terraform-plan PR comments
-      actions: read        # Required for reusable workflow to resolve per-job URLs
-      checks: read         # Required for summarize job to fetch check-run annotations
+      actions: read    # Required for reusable workflow to resolve per-job URLs
+      checks: read     # Required for summarize job to fetch check-run annotations
 
     strategy:
       fail-fast: false

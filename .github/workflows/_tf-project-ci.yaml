@@ -69,8 +69,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
   # One plan job per workspace.  Only runs after both fmt and validate pass.
-  # dflook/terraform-plan handles init, workspace selection, and plan, then
-  # posts a collapsible plan diff comment on the PR (updated on re-run).
+  # dflook/terraform-plan handles init, workspace selection, and plan.
   # Plans are read-only — locking is disabled to avoid dangling locks if the
   # job is cancelled mid-run by concurrency controls.
   # ─────────────────────────────────────────────────────────────────────────────
@@ -80,10 +79,9 @@ jobs:
     timeout-minutes: 30
     needs: [fmt, validate]
     permissions:
-      id-token: write      # Required for OIDC → AWS
+      id-token: write  # Required for OIDC → AWS
       contents: read
-      pull-requests: write # Required for dflook/terraform-plan PR comments
-      actions: read        # Required to resolve per-job URLs for the summary table
+      actions: read    # Required to resolve per-job URLs for the summary table
 
     strategy:
       fail-fast: false
@@ -105,13 +103,12 @@ jobs:
       - name: Terraform Plan
         id: plan
         uses: dflook/terraform-plan@7878bff63e2099cdc9be9a6f33cbbbf687f8f0fe  # v2.2.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: ${{ inputs.project }}
           workspace: ${{ matrix.workspace }}
           var_file: ${{ inputs.project }}/environments/${{ matrix.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ matrix.workspace }}"
+          add_github_comment: "false"
           args: -lock=false
 
       - name: Save plan result
