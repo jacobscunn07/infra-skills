@@ -36,7 +36,7 @@ jobs:
   # already in progress on other branches.
   # ─────────────────────────────────────────────────────────────────────────────
   plan:
-    name: "plan: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    name: "plan (${{ inputs.workspace }})"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -76,7 +76,7 @@ jobs:
   # state file (e.g. a re-run overlapping a still-running apply).
   # ─────────────────────────────────────────────────────────────────────────────
   apply:
-    name: "apply: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    name: "apply (${{ inputs.workspace }})"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [plan]
@@ -123,7 +123,7 @@ jobs:
   # fails so failures are represented in the summary.
   # ─────────────────────────────────────────────────────────────────────────────
   report:
-    name: "report: ${{ inputs.project }} / ${{ inputs.workspace }}"
+    name: "report (${{ inputs.workspace }})"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [plan, apply]
@@ -172,10 +172,15 @@ jobs:
               run_id:   context.runId,
               per_page: 100,
             });
-            const applyJobName = `apply: ${project} / ${ws}`;
-            const planJobName  = `plan: ${project} / ${ws}`;
-            const job = resp.data.jobs.find(j => j.name === applyJobName)
-                     ?? resp.data.jobs.find(j => j.name === planJobName);
+            const applyLeaf = `apply (${ws})`;
+            const planLeaf  = `plan (${ws})`;
+            const job = resp.data.jobs.find(j =>
+              (j.name === applyLeaf || j.name.endsWith(` / ${applyLeaf}`)) &&
+              j.name.includes(project)
+            ) ?? resp.data.jobs.find(j =>
+              (j.name === planLeaf || j.name.endsWith(` / ${planLeaf}`)) &&
+              j.name.includes(project)
+            );
 
             const result = {
               workspace:      ws,
