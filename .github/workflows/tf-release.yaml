@@ -77,6 +77,50 @@ jobs:
             ));
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # tf-testA has no project-dependencies so it runs as soon as setup completes.
+  # Skipped entirely when its deploy flag is false.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-testA:
+    name: Deploy tf-testA
+    needs: [setup]
+    if: fromJSON(needs.setup.outputs.deploy)['tf-testA']
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-testA
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # tf-testB depends on tf-testA (declared in tf-testB/ci.yaml).  This job
+  # waits for deploy-tf-testA to finish before starting.
+  #
+  # always() is required so GitHub does not auto-skip this job when
+  # deploy-tf-testA is skipped (i.e. when only tf-testB/ files changed).
+  # != 'failure' permits both the success and skipped results while still
+  # blocking tf-testB from deploying if tf-testA errored.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-testB:
+    name: Deploy tf-testB
+    needs: [setup, deploy-tf-testA]
+    if: |
+      always() &&
+      fromJSON(needs.setup.outputs.deploy)['tf-testB'] &&
+      needs.deploy-tf-testA.result != 'failure'
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-testB
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # tf-network-spoke has no project-dependencies so it runs as soon as setup
   # completes.  Skipped entirely when its deploy flag is false.
   # ─────────────────────────────────────────────────────────────────────────────

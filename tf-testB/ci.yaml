@@ -1,4 +1,4 @@
-enabled: false
+enabled: true
 aws-credentials: false
 
 workspaces:
@@ -12,4 +12,5 @@ workspaces:
     enabled: true
     continuous-deploy: false
 
-project-dependencies: []
+project-dependencies:
+  - tf-testA

@@ -14,14 +14,14 @@ on:
         required: true
         type: choice
         options:
-          - tf-data / dev
-          - tf-data / staging
-          - tf-data / prod
-          - tf-data / all
-          - tf-network-spoke / dev
-          - tf-network-spoke / staging
-          - tf-network-spoke / prod
-          - tf-network-spoke / all
+          - tf-testA / dev
+          - tf-testA / staging
+          - tf-testA / prod
+          - tf-testA / all
+          - tf-testB / dev
+          - tf-testB / staging
+          - tf-testB / prod
+          - tf-testB / all
 
 # Least-privilege defaults — jobs elevate only what they need.
 permissions:
