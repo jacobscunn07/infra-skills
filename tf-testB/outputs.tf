@@ -9,3 +9,7 @@ output "environment" {
 output "name_prefix" {
   value = local.name_prefix
 }
+
+output "version" {
+  value = "1"
+}
