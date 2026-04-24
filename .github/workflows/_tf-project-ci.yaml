@@ -110,7 +110,7 @@ jobs:
         with:
           path: ${{ inputs.project }}
           workspace: ${{ matrix.workspace }}
-          var_file: environments/${{ matrix.workspace }}/terraform.tfvars
+          var_file: ${{ inputs.project }}/environments/${{ matrix.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ matrix.workspace }}"
           args: -lock=false
 

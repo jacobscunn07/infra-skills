@@ -63,7 +63,7 @@ jobs:
         with:
           path: ${{ inputs.project }}
           workspace: ${{ inputs.workspace }}
-          var_file: environments/${{ inputs.workspace }}/terraform.tfvars
+          var_file: ${{ inputs.project }}/environments/${{ inputs.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ inputs.workspace }}"
           add_github_comment: false
           args: -lock=false
@@ -112,7 +112,7 @@ jobs:
         with:
           path: ${{ inputs.project }}
           workspace: ${{ inputs.workspace }}
-          var_file: environments/${{ inputs.workspace }}/terraform.tfvars
+          var_file: ${{ inputs.project }}/environments/${{ inputs.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ inputs.workspace }}"
           add_github_comment: false
           auto_approve: true
