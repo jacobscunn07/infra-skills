@@ -57,8 +57,8 @@ jobs:
         env:
           MATRIX: ${{ steps.workspace-matrix.outputs.matrix }}
         run: |
-          WORKSPACES=$(echo "$MATRIX" | jq -c '.include[0].workspaces')
-          AWS_CREDS=$(echo "$MATRIX" | jq -c '.include[0].aws_credentials')
+          WORKSPACES=$(echo "$MATRIX" | jq -c '[.include[].workspace]')
+          AWS_CREDS=$(echo "$MATRIX" | jq -c '[.include[] | {(.workspace): .aws_credentials}] | add')
           echo "workspaces=$WORKSPACES" >> "$GITHUB_OUTPUT"
           echo "aws_credentials=$AWS_CREDS" >> "$GITHUB_OUTPUT"
 
