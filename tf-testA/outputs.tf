@@ -11,5 +11,5 @@ output "name_prefix" {
 }
 
 output "version" {
-  value = "2"
+  value = "3"
 }
