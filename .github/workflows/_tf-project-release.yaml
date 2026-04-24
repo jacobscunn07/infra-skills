@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workspace: ${{ fromJSON(needs.setup.outputs.workspaces) }}
+        workspace: ${{ fromJSON(needs.setup.outputs.workspaces || '["(none)"]') }}
     uses: ./.github/workflows/_tf-workspace-release.yaml
     with:
       project: ${{ inputs.project }}
