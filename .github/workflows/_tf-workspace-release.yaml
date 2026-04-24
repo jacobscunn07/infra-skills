@@ -114,7 +114,6 @@ jobs:
           workspace: ${{ inputs.workspace }}
           var_file: ${{ inputs.project }}/environments/${{ inputs.workspace }}/terraform.tfvars
           label: "${{ inputs.project }} / ${{ inputs.workspace }}"
-          add_github_comment: false
           auto_approve: true
 
   # ─────────────────────────────────────────────────────────────────────────────
