@@ -1,6 +1,6 @@
 Commit all staged and unstaged changes, then push to origin. Follow this workflow exactly:
 
-The command may be invoked with an optional ticket ID argument (e.g., `/commit-push INFRA-6`). The argument is available as `$ARGUMENTS`.
+The command may be invoked with an optional ticket ID argument (e.g., `/git-commit-push INFRA-6`). The argument is available as `$ARGUMENTS`.
 
 1. **Check the current branch.** Run `git branch --show-current`.
    - If the branch is `main` or `master`:
