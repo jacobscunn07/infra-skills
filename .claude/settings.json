@@ -4,6 +4,17 @@
     "terraform-registry"
   ],
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/document-environment.py",
+            "description": "Inject installed CLI tool versions into session context at session start"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
