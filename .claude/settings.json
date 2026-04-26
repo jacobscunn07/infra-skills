@@ -21,17 +21,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'CMD=\"$1\"; PATTERNS=(\"terraform apply\" \"terraform destroy\" \"terraform force-unlock\" \"aws s3 rb\" \"aws iam delete\" \"aws ec2 terminate-instances\" \"rm -rf\" \"git push --force\" \"kubectl delete namespace\"); for P in \"${PATTERNS[@]}\"; do if echo \"$CMD\" | grep -qF \"$P\"; then echo \"BLOCKED: \\\"$P\\\" is a guard-railed command. Human approval required before this action can be taken. Aborting.\"; exit 1; fi; done' -- \"{{command}}\"",
+            "command": "python3 .claude/hooks/block-dangerous-commands.py",
             "description": "Block dangerous / destructive commands that require explicit human approval"
           },
           {
             "type": "command",
-            "command": "bash -c 'CMD=\"$1\"; if echo \"$CMD\" | grep -q \"git commit\"; then BRANCH=$(git branch --show-current 2>/dev/null); if [ \"$BRANCH\" = \"main\" ] || [ \"$BRANCH\" = \"master\" ]; then echo \"BLOCKED: Cannot commit directly to the \\\"$BRANCH\\\" branch. Create a feature branch first (e.g., git checkout -b <feature-branch>).\"; exit 1; fi; fi' -- \"{{command}}\"",
+            "command": "python3 .claude/hooks/block-commit-on-main.py",
             "description": "Block git commits on main/master — use a feature branch instead"
           },
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); cmd=d.get('tool_input',{}).get('command','?'); parts=cmd.split(); proj=next((os.path.basename(parts[i+1].rstrip('/')) for i,p in enumerate(parts[:-1]) if p=='cd'),'unknown'); chdir=next((p.split('=',1)[1].rstrip('/') for p in parts if p.startswith('-chdir=')),''); proj=os.path.basename(chdir) if chdir else proj; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); tf_flag=' [project:'+proj+']' if any(t in cmd for t in ['terraform','tofu']) else ''; open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Bash]'+tf_flag+' '+cmd[:200]+'\\n')\"",
+            "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Bash tool calls to <repo-root>/.claude/logs/tool-activity.log; include [project:<name>] for terraform commands"
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); rel=fp.replace('/Users/jacobcunningham/_CODE/infra-skills/',''); proj=rel.split('/')[0] if '/' in rel else 'root'; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Write] [project:'+proj+'] '+fp+'\\n')\"",
+            "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Write tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,os,datetime; d=json.load(sys.stdin); fp=d.get('tool_input',{}).get('file_path','?'); rel=fp.replace('/Users/jacobcunningham/_CODE/infra-skills/',''); proj=rel.split('/')[0] if '/' in rel else 'root'; log_dir='/Users/jacobcunningham/_CODE/infra-skills/.claude/logs'; os.makedirs(log_dir,exist_ok=True); open(os.path.join(log_dir,'tool-activity.log'),'a').write(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')+' [TOOL:Edit] [project:'+proj+'] '+fp+'\\n')\"",
+            "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Edit tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
         ]
