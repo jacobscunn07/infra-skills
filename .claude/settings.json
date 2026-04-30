@@ -46,6 +46,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 .claude/hooks/scan-secrets.py",
+            "description": "Scan content for secrets using gitleaks before writing — skipped if gitleaks is not installed"
+          },
+          {
+            "type": "command",
             "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Write tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
@@ -54,6 +59,11 @@
       {
         "matcher": "Edit",
         "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/scan-secrets.py",
+            "description": "Scan inserted content for secrets using gitleaks before editing — skipped if gitleaks is not installed"
+          },
           {
             "type": "command",
             "command": "python3 .claude/hooks/log-tool-activity.py",

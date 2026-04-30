@@ -61,6 +61,8 @@ tools = {
                           parse=lambda out: out.split("\n")[0].removeprefix("Version: ").strip()),
     "yq":             check_tool(["yq", "--version"],
                           parse=lambda out: out.split("version ")[-1].strip()),
+    "gitleaks":       check_tool(["gitleaks", "version"],
+                          parse=lambda out: out.strip().lstrip("v")),
 }
 
 lines = [
