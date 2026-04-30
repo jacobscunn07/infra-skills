@@ -56,7 +56,8 @@
           }
         ]
       }
-    ]
+    ],
+    "PostToolUse": []
   },
   "permissions": {
     "allow": [
