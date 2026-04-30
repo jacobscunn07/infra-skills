@@ -1,0 +1,19 @@
+framework:
+  - terraform
+
+# Fail only on HIGH and CRITICAL severity findings.
+# MEDIUM creates permanent noise for valid architectural choices
+# (CloudTrail, access logging) that these projects intentionally don't own.
+check:
+  - HIGH
+  - CRITICAL
+
+# Confirmed false positives against terraform-aws-modules/* community modules.
+# Add new entries here with a comment explaining why — never suppress in the workflow.
+skip-check:
+  - CKV_AWS_144   # S3 cross-region replication — intentional; lifecycle tiering is the durability strategy
+  - CKV_AWS_18    # S3 access logging — not required for internal app buckets in this architecture
+  - CKV2_AWS_62   # S3 event notification — operational config, not a security control
+
+output: sarif
+output-file-path: /tmp/checkov

@@ -87,6 +87,7 @@ jobs:
       contents: read
       actions: read    # Required for reusable workflow to resolve per-job URLs
       checks: read     # Required for summarize job to fetch check-run annotations
+      security-events: write  # Required for checkov SARIF upload in the scan job
 
     strategy:
       fail-fast: false

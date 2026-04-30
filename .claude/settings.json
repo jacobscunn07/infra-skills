@@ -31,6 +31,11 @@
           },
           {
             "type": "command",
+            "command": "python3 .claude/hooks/run-checkov.py",
+            "description": "Run checkov security scan before terraform plan/validate — skipped if checkov is not installed"
+          },
+          {
+            "type": "command",
             "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Bash tool calls to <repo-root>/.claude/logs/tool-activity.log; include [project:<name>] for terraform commands"
           }
@@ -61,6 +66,7 @@
   },
   "permissions": {
     "allow": [
+      "Bash(checkov:*)",
       "Bash(terraform validate:*)",
       "Bash(terraform fmt:*)",
       "Bash(terraform plan:*)",
