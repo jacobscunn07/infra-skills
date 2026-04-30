@@ -22,3 +22,7 @@ The command may be invoked with an optional ticket ID argument (e.g., `/git-comm
    - Commit with the confirmed message.
 
 6. **Push** with `git push -u origin <branch>`.
+
+7. **Display the pull request link.** After a successful push, run `git remote get-url origin` to get the repo URL. Derive the GitHub PR creation URL in the form `https://github.com/<owner>/<repo>/compare/<branch>?expand=1` and output it as a prominent markdown link the user can click:
+
+   > **Open a pull request:** [Create PR on GitHub](https://github.com/<owner>/<repo>/compare/<branch>?expand=1)
