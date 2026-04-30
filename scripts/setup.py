@@ -95,3 +95,10 @@ for name, aid in accounts:
     print(f"    {name} → {aid}")
 print(f"    OIDC role ARN → {oidc_arn}")
 print(f"    GitHub trust policy → repo:{github_org}/infra-skills:*")
+
+print()
+print("Next step:")
+print("  Run: python3 scripts/create-github-environments.py")
+print("  Creates all terraform/<project>/<workspace> GitHub Environments and optionally")
+print("  adds required reviewers to gate terraform apply in CI.")
+print("  Requires a GitHub personal access token with 'repo' scope.")
