@@ -24,6 +24,17 @@ def prompt(label, example=None):
     return val
 
 
+def read_existing_arn(account_map_path):
+    """Return the ARN already written to aws-account-map.md, or None if still a placeholder."""
+    for line in account_map_path.read_text().splitlines():
+        if "| Role ARN |" in line and "REPLACE_ME" not in line:
+            # Extract the backtick-quoted value: | Role ARN | `arn:aws:iam::...` |
+            parts = line.split("`")
+            if len(parts) >= 2:
+                return parts[1]
+    return None
+
+
 def replace_in_file(path, old, new):
     content = path.read_text()
     if old not in content:
@@ -66,7 +77,12 @@ bucket = prompt("Terraform state S3 bucket name")
 region = input("Primary AWS region [us-east-1]: ").strip() or "us-east-1"
 accounts = collect_accounts()
 print()
-oidc_arn = prompt("OIDC role ARN", "arn:aws:iam::<account-id>:role/github-actions-oidc")
+existing_arn = read_existing_arn(REPO_ROOT / ".claude" / "memory" / "aws-account-map.md")
+if existing_arn:
+    raw = input(f"OIDC role ARN [{existing_arn}]: ").strip()
+    oidc_arn = raw or existing_arn
+else:
+    oidc_arn = prompt("OIDC role ARN", "arn:aws:iam::<account-id>:role/github-actions-oidc")
 github_org = prompt("GitHub org or username", "myorg")
 
 print()
@@ -98,7 +114,7 @@ print(f"    GitHub trust policy → repo:{github_org}/infra-skills:*")
 
 print()
 print("Next step:")
-print("  Run: python3 scripts/create-github-environments.py")
-print("  Creates all terraform/<project>/<workspace> GitHub Environments and optionally")
-print("  adds required reviewers to gate terraform apply in CI.")
+print("  Run: python3 scripts/setup-github.py")
+print("  Creates all terraform/<project>/<workspace> GitHub Environments, sets the")
+print("  AWS_ROLE_ARN Actions variable, and optionally adds required reviewers.")
 print("  Requires a GitHub personal access token with 'repo' scope.")

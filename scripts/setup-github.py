@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Create GitHub Environments for all enabled Terraform projects and workspaces.
+Configure GitHub-side setup for this repository:
+  1. Creates GitHub Environments for all enabled Terraform projects and workspaces.
+  2. Sets the AWS_ROLE_ARN Actions variable (read from .claude/memory/aws-account-map.md).
 
 Environment naming: terraform/<project>/<workspace>
 Discovered from:    tf-*/ci.yaml files in the repository root
 
+Run after python3 scripts/setup.py (which fills in the OIDC role ARN).
+
 Usage:
-    GITHUB_TOKEN=ghp_xxx python3 scripts/create-github-environments.py
-    GITHUB_TOKEN=ghp_xxx DRY_RUN=1 python3 scripts/create-github-environments.py
+    GITHUB_TOKEN=ghp_xxx python3 scripts/setup-github.py
+    GITHUB_TOKEN=ghp_xxx DRY_RUN=1 python3 scripts/setup-github.py
 
 Requires a GitHub personal access token with 'repo' scope (Settings → Developer settings →
 Personal access tokens). The token is read from GITHUB_TOKEN env var or prompted interactively.
 
-Safe to re-run: PUT /environments is idempotent.
+Safe to re-run: environments are upserted (PUT), variable is upserted (PATCH/POST).
 """
 
 import json
@@ -133,6 +137,46 @@ def github_request(method, path, token, body=None):
         sys.exit(1)
 
 
+def read_oidc_arn():
+    """Read the OIDC role ARN from aws-account-map.md; return None if still a placeholder."""
+    account_map = REPO_ROOT / ".claude" / "memory" / "aws-account-map.md"
+    for line in account_map.read_text().splitlines():
+        if "| Role ARN |" in line and "REPLACE_ME" not in line:
+            parts = line.split("`")
+            if len(parts) >= 2:
+                return parts[1]
+    return None
+
+
+def upsert_actions_variable(owner, repo, name, value, token, dry_run):
+    path = f"/repos/{owner}/{repo}/actions/variables/{name}"
+    if dry_run:
+        print(f"  [dry-run] upsert variable {name}={value}")
+        return
+    # Try PATCH first (update); fall back to POST (create) on 404.
+    req = urllib.request.Request(
+        f"{API_BASE}{path}",
+        data=json.dumps({"name": name, "value": value}).encode(),
+        method="PATCH",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        urllib.request.urlopen(req)
+        print(f"  updated  variable {name}")
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            print(f"ERROR: GitHub API PATCH {path} → {e.code}: {e.read().decode()}", file=sys.stderr)
+            sys.exit(1)
+        # Variable doesn't exist yet — create it.
+        github_request("POST", f"/repos/{owner}/{repo}/actions/variables", token, {"name": name, "value": value})
+        print(f"  created  variable {name}")
+
+
 def get_user_id(username, token):
     result = github_request("GET", f"/users/{urllib.parse.quote(username)}", token)
     return result["id"]
@@ -196,6 +240,15 @@ def main():
     for project, ws in envs:
         env_name = f"terraform/{project}/{ws}"
         create_environment(owner, repo, env_name, reviewer_ids, token, dry_run)
+
+    print()
+    oidc_arn = read_oidc_arn()
+    if oidc_arn:
+        print("Setting AWS_ROLE_ARN Actions variable...")
+        upsert_actions_variable(owner, repo, "AWS_ROLE_ARN", oidc_arn, token, dry_run)
+    else:
+        print("WARNING: OIDC role ARN not set in .claude/memory/aws-account-map.md.")
+        print("         Run python3 scripts/setup.py first, then re-run this script.")
 
     print()
     if dry_run:
