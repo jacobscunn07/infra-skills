@@ -34,7 +34,7 @@
 |---|---|
 | Role ARN | `REPLACE_ME` (e.g. `arn:aws:iam::<account-id>:role/github-actions-oidc`) |
 | Trust policy conditions | `repo:REPLACE_ME/infra-skills:*` |
-| GitHub secret name | `AWS_ROLE_ARN` |
+| GitHub variable name | `AWS_ROLE_ARN` |
 
 ---
 

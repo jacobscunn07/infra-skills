@@ -142,7 +142,7 @@ Hooks are defined in [.claude/settings.json](.claude/settings.json) under `hooks
 
 ## CI/CD
 
-Five public GitHub Actions workflows manage the full Terraform lifecycle. All AWS-authenticated jobs use OIDC (`id-token: write`) via the `AWS_ROLE_ARN` secret.
+Five public GitHub Actions workflows manage the full Terraform lifecycle. All AWS-authenticated jobs use OIDC (`id-token: write`) via the `AWS_ROLE_ARN` Actions variable.
 
 | Workflow | Trigger | What it does |
 |---|---|---|

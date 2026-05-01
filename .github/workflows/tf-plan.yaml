@@ -4,8 +4,8 @@ name: Terraform Plan
 # Choosing a "/ all" target plans every workspace discovered under the
 # project's environments/ directory.
 #
-# NOTE: the target dropdown is a static list — add new entries here whenever
-# a new Terraform project (directory with a backend.tf) is added to the repo.
+# NOTE: the target dropdown is kept in sync automatically — run
+# `python3 .github/scripts/sync-workflow-options.py` after adding a project.
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +14,14 @@ on:
         required: true
         type: choice
         options:
+          - tf-data / dev
+          - tf-data / staging
+          - tf-data / prod
+          - tf-data / all
+          - tf-network-spoke / dev
+          - tf-network-spoke / staging
+          - tf-network-spoke / prod
+          - tf-network-spoke / all
           - tf-testA / dev
           - tf-testA / staging
           - tf-testA / prod

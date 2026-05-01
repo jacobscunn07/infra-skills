@@ -46,6 +46,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 .claude/hooks/scan-secrets.py",
+            "description": "Scan content for secrets using gitleaks before writing — skipped if gitleaks is not installed"
+          },
+          {
+            "type": "command",
             "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Write tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
@@ -56,13 +61,39 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 .claude/hooks/scan-secrets.py",
+            "description": "Scan inserted content for secrets using gitleaks before editing — skipped if gitleaks is not installed"
+          },
+          {
+            "type": "command",
             "command": "python3 .claude/hooks/log-tool-activity.py",
             "description": "Log all Edit tool calls to <repo-root>/.claude/logs/tool-activity.log with project context"
           }
         ]
       }
     ],
-    "PostToolUse": []
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/sync-workflow-options-on-change.py",
+            "description": "Re-sync tf-plan.yaml and tf-unlock.yaml dropdowns when a backend.tf or environments/ file is written"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/sync-workflow-options-on-change.py",
+            "description": "Re-sync tf-plan.yaml and tf-unlock.yaml dropdowns when a backend.tf or environments/ file is edited"
+          }
+        ]
+      }
+    ]
   },
   "permissions": {
     "allow": [

@@ -24,6 +24,12 @@ on:
           - tf-network-spoke / dev
           - tf-network-spoke / staging
           - tf-network-spoke / prod
+          - tf-testA / dev
+          - tf-testA / staging
+          - tf-testA / prod
+          - tf-testB / dev
+          - tf-testB / staging
+          - tf-testB / prod
       lock_id:
         description: Lock ID to release (from the Terraform error message)
         required: true
@@ -67,7 +73,7 @@ jobs:
         if: fromJSON(steps.aws-config.outputs.matrix).include[0].aws_credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37  # v6.1.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: us-east-1
           mask-aws-account-id: 'true'
 

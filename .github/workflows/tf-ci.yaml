@@ -17,6 +17,23 @@ permissions:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
+  # Verifies that tf-plan.yaml and tf-unlock.yaml dropdowns list every tf-*
+  # project and workspace on disk.  Fails the PR if a project was added without
+  # running sync-workflow-options.py.
+  # ─────────────────────────────────────────────────────────────────────────────
+  validate-dropdowns:
+    name: Validate workflow dropdowns
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Check dropdowns are in sync
+        run: python3 .github/scripts/sync-workflow-options.py --check
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # Discovers which Terraform projects have changed in this PR using the shared
   # terraform-matrix composite action.  base_ref is passed so only projects
   # with changed files are included.  fetch-depth: 0 is required on checkout

@@ -1,1 +1,21 @@
+# All files — baseline review
 * @jacobscunn07
+
+# IAM, KMS, and security-group Terraform files always require @jacobscunn07.
+# This ensures a second contributor cannot bypass review on high-risk changes
+# even if the wildcard above is broadened to include additional reviewers.
+# (Last matching rule wins in CODEOWNERS, so these override the wildcard for matched files.)
+**/iam.tf @jacobscunn07
+**/iam_*.tf @jacobscunn07
+**/*_iam.tf @jacobscunn07
+**/*_iam_*.tf @jacobscunn07
+**/kms.tf @jacobscunn07
+**/kms_*.tf @jacobscunn07
+**/*_kms.tf @jacobscunn07
+**/*_kms_*.tf @jacobscunn07
+**/sg.tf @jacobscunn07
+**/sg_*.tf @jacobscunn07
+**/*_sg.tf @jacobscunn07
+**/*_sg_*.tf @jacobscunn07
+**/security_groups.tf @jacobscunn07
+**/security_group_*.tf @jacobscunn07
