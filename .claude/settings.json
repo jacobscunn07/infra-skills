@@ -72,7 +72,28 @@
         ]
       }
     ],
-    "PostToolUse": []
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/sync-workflow-options-on-change.py",
+            "description": "Re-sync tf-plan.yaml and tf-unlock.yaml dropdowns when a backend.tf or environments/ file is written"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/sync-workflow-options-on-change.py",
+            "description": "Re-sync tf-plan.yaml and tf-unlock.yaml dropdowns when a backend.tf or environments/ file is edited"
+          }
+        ]
+      }
+    ]
   },
   "permissions": {
     "allow": [

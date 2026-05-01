@@ -24,6 +24,12 @@ on:
           - tf-network-spoke / dev
           - tf-network-spoke / staging
           - tf-network-spoke / prod
+          - tf-testA / dev
+          - tf-testA / staging
+          - tf-testA / prod
+          - tf-testB / dev
+          - tf-testB / staging
+          - tf-testB / prod
       lock_id:
         description: Lock ID to release (from the Terraform error message)
         required: true
