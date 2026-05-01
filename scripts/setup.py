@@ -84,6 +84,7 @@ if existing_arn:
 else:
     oidc_arn = prompt("OIDC role ARN", "arn:aws:iam::<account-id>:role/github-actions-oidc")
 github_org = prompt("GitHub org or username", "myorg")
+codeowners_reviewer = prompt("GitHub username for CODEOWNERS reviewer", "jacobscunn07")
 
 print()
 print("Applying substitutions...")
@@ -102,8 +103,12 @@ replace_in_file(account_map, OLD_ACCOUNTS_TABLE, build_accounts_table(accounts, 
 replace_in_file(account_map, "| Role ARN | `REPLACE_ME`", f"| Role ARN | `{oidc_arn}`")
 replace_in_file(account_map, "repo:REPLACE_ME/infra-skills", f"repo:{github_org}/infra-skills")
 
+# CODEOWNERS
+replace_in_file(REPO_ROOT / ".github" / "CODEOWNERS", "jacobscunn07", codeowners_reviewer)
+
 print()
 print("Done. Changes applied:")
+print(f'  .github/CODEOWNERS          → reviewer @{codeowners_reviewer}')
 print(f'  tf-data/backend.tf          → bucket = "{bucket}"')
 print(f'  tf-network-spoke/backend.tf → bucket = "{bucket}"')
 print( "  .claude/memory/aws-account-map.md:")
