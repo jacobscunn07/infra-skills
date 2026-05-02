@@ -16,3 +16,5 @@ single_nat_gateway = true
 
 enable_flow_logs        = true
 flow_log_retention_days = 30
+
+aws_profile = "tf-network-spoke-dev"

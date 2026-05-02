@@ -42,6 +42,10 @@ jobs:
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
+    env:
+      AWS_CONFIG_FILE: .github/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: .github/.aws/credentials
+      AWS_SDK_LOAD_CONFIG: "1"
     outputs:
       failure_reason: ${{ steps.plan.outputs.failure-reason }}
 
@@ -88,6 +92,10 @@ jobs:
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
+    env:
+      AWS_CONFIG_FILE: .github/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: .github/.aws/credentials
+      AWS_SDK_LOAD_CONFIG: "1"
     outputs:
       to_add:         ${{ steps.apply.outputs.to_add }}
       to_change:      ${{ steps.apply.outputs.to_change }}

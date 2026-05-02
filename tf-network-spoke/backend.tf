@@ -7,5 +7,6 @@ terraform {
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true
+    profile      = "REPLACE_WITH_BACKEND_PROFILE"
   }
 }

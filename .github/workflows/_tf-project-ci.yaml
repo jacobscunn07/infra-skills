@@ -116,6 +116,10 @@ jobs:
       id-token: write  # Required for OIDC → AWS
       contents: read
       actions: read    # Required to resolve per-job URLs for the summary table
+    env:
+      AWS_CONFIG_FILE: .github/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: .github/.aws/credentials
+      AWS_SDK_LOAD_CONFIG: "1"
 
     strategy:
       fail-fast: false

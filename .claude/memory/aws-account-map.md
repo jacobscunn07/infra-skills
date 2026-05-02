@@ -38,7 +38,38 @@
 
 ---
 
-## Notes
+## Backend Role (shared — all projects/workspaces)
 
-- All Terraform projects use a single OIDC role unless noted otherwise.
-- Add per-project exceptions here if a project assumes a different role.
+| Field | Value |
+|---|---|
+| Role ARN | `REPLACE_ME` (e.g. `arn:aws:iam::<mgmt-account-id>:role/terraform-backend`) |
+| Profile name | `terraform-backend` |
+| Used for | S3 state bucket read/write; hardcoded in every `backend.tf` |
+
+---
+
+## SSM Role (shared — all projects/workspaces)
+
+| Field | Value |
+|---|---|
+| Role ARN | `REPLACE_ME` (e.g. `arn:aws:iam::<mgmt-account-id>:role/terraform-ssm`) |
+| Profile name | `terraform-ssm` |
+| Used for | SSM Parameter Store writes via the `aws.ssm` provider alias in every project |
+
+---
+
+## Deploy Roles (per project/workspace)
+
+Profile naming convention: `tf-<project>-<workspace>`
+
+| Project | Workspace | AWS Account | Profile Name | Role ARN |
+|---|---|---|---|---|
+| tf-network-spoke | dev | dev | `tf-network-spoke-dev` | `REPLACE_ME` |
+| tf-network-spoke | staging | staging | `tf-network-spoke-staging` | `REPLACE_ME` |
+| tf-network-spoke | prod | prod | `tf-network-spoke-prod` | `REPLACE_ME` |
+| tf-data | dev | dev | `tf-data-dev` | `REPLACE_ME` |
+| tf-data | staging | staging | `tf-data-staging` | `REPLACE_ME` |
+| tf-data | prod | prod | `tf-data-prod` | `REPLACE_ME` |
+
+Profile definitions live in `.github/.aws/config` (CI) and `~/.aws/config` (local).
+See `docs/reference/local-dev-setup.md` for the local profile template.
