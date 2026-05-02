@@ -163,3 +163,30 @@ jobs:
       contents: read
       actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
       checks: read   # summarize job needs listAnnotations for error annotations
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # tf-ecs depends on tf-network-spoke and tf-data (declared in tf-ecs/ci.yaml).
+  # This job waits for both upstream deploys to finish before starting.
+  #
+  # always() is required so GitHub does not auto-skip this job when either
+  # upstream job is skipped (i.e. when only tf-ecs/ files changed).
+  # != 'failure' permits both the success and skipped results while still
+  # blocking tf-ecs from deploying if either upstream errored.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-tf-ecs:
+    name: Deploy tf-ecs
+    needs: [setup, deploy-tf-network-spoke, deploy-tf-data]
+    if: |
+      always() &&
+      fromJSON(needs.setup.outputs.deploy)['tf-ecs'] &&
+      needs.deploy-tf-network-spoke.result != 'failure' &&
+      needs.deploy-tf-data.result != 'failure'
+    uses: ./.github/workflows/_tf-project-release.yaml
+    with:
+      project: tf-ecs
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+      actions: read  # report job needs listJobsForWorkflowRun to resolve job URLs
+      checks: read   # summarize job needs listAnnotations for error annotations

@@ -18,6 +18,10 @@ on:
           - tf-data / staging
           - tf-data / prod
           - tf-data / all
+          - tf-ecs / dev
+          - tf-ecs / staging
+          - tf-ecs / prod
+          - tf-ecs / all
           - tf-network-spoke / dev
           - tf-network-spoke / staging
           - tf-network-spoke / prod
