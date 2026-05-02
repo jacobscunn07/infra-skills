@@ -21,6 +21,9 @@ on:
           - tf-data / dev
           - tf-data / staging
           - tf-data / prod
+          - tf-ecs / dev
+          - tf-ecs / staging
+          - tf-ecs / prod
           - tf-network-spoke / dev
           - tf-network-spoke / staging
           - tf-network-spoke / prod
