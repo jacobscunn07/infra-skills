@@ -19,3 +19,5 @@ backup_retention_period = 7
 enable_rds_proxy = true
 
 app_data_bucket_suffix = "abc123"
+
+aws_profile = "tf-data-staging"

@@ -50,6 +50,10 @@ jobs:
     permissions:
       id-token: write  # Required for OIDC → AWS
       contents: read
+    env:
+      AWS_CONFIG_FILE: .github/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: .github/.aws/credentials
+      AWS_SDK_LOAD_CONFIG: "1"
 
     steps:
       - name: Checkout

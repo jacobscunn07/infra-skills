@@ -96,3 +96,16 @@ variable "app_data_bucket_suffix" {
   type        = string
   description = "Unique suffix appended to the app data S3 bucket name (e.g. account ID last 6 digits)."
 }
+
+# ─── IAM ─────────────────────────────────────────────────────────────────────
+
+variable "aws_profile" {
+  type        = string
+  description = "AWS config profile for the main provider. Matches a profile in .github/.aws/config (CI) or ~/.aws/config (local)."
+}
+
+variable "ssm_profile" {
+  type        = string
+  description = "AWS config profile for the SSM provider alias. Shared across all workspaces — default set by setup script."
+  default     = "REPLACE_WITH_SSM_PROFILE"
+}

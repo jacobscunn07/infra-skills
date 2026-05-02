@@ -10,7 +10,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = var.aws_profile
 
   default_tags {
     tags = local.common_tags
@@ -18,8 +19,9 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias  = "ssm"
-  region = var.ssm_region
+  alias   = "ssm"
+  region  = var.ssm_region
+  profile = var.ssm_profile
 
   default_tags {
     tags = local.common_tags

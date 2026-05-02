@@ -24,3 +24,5 @@ enable_rds_proxy = true
 
 # Unique suffix to make the S3 bucket name globally unique (e.g. last 6 digits of account ID).
 app_data_bucket_suffix = "abc123"
+
+aws_profile = "tf-data-dev"

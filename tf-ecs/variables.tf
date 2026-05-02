@@ -15,6 +15,19 @@ variable "ssm_region" {
   default     = "us-east-1"
 }
 
+# ─── IAM ─────────────────────────────────────────────────────────────────────
+
+variable "aws_profile" {
+  type        = string
+  description = "AWS config profile for the main provider. Matches a profile in .github/.aws/config (CI) or ~/.aws/config (local)."
+}
+
+variable "ssm_profile" {
+  type        = string
+  description = "AWS config profile for the SSM provider alias. Shared across all workspaces — default set by setup script."
+  default     = "REPLACE_WITH_SSM_PROFILE"
+}
+
 # -----------------------------------------------------------------------------
 # Project-specific variables — add below
 # -----------------------------------------------------------------------------
