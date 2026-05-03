@@ -23,6 +23,13 @@ Claude handles requests end-to-end. The workflow for any infrastructure task is:
 5. **Validate** — run `terraform validate` then `terraform fmt`. Surface the plan output before any apply is considered.
 6. **Human approval required** — `terraform apply`, `terraform destroy`, and all destructive AWS commands are blocked by hooks. Always surface plan output and wait for explicit confirmation.
 
+### Documentation Quality
+
+Whenever a human-facing file is written or updated — README.md, any file under `docs/`, any file under `wiki/`, or any file linked from README — two extra steps are required before the task is complete:
+
+1. **Sync related docs.** Check whether the change needs to be reflected in README.md or in any file it links to. Update those files in the same PR.
+2. **Humanize.** Invoke `/humanizer` on every human-facing file that was written or modified. Do not skip this even for minor edits.
+
 ---
 
 ## Coding Principles
@@ -102,6 +109,7 @@ Invoke these skills when the task touches their domain. Skills provide current b
 | `/terraform` | Writing, reviewing, or debugging any Terraform HCL — resources, modules, variables, state, backends, lifecycle rules |
 | `/technical-docs` | Writing or reviewing tutorials, how-to guides, reference docs, and runbooks |
 | `/github-actions` | CI/CD workflows, matrix builds, reusable workflows, OIDC, secrets, composite actions |
+| `/humanizer` | Writing or editing any human-facing file — README.md, docs/**, wiki/**, or any file linked from README |
 
 ---
 
